@@ -1,6 +1,16 @@
 const STORAGE_KEY = 'cotizaflow_fase2_local_state_v1';
 const config = window.COTIZAFLOW_CONFIG || {};
 const app = document.getElementById('app');
+const REFERRAL_STORAGE_KEY = 'cotizaflow_pending_referral_code_v1';
+
+const PLAN_CATALOG = {
+  free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, description: 'Prueba limitada para validar el producto.' },
+  starter: { name: 'Starter', price: 9, quoteLimit: 30, users: 1, description: 'Para negocios pequeños que cotizan pocas veces al mes.' },
+  pro: { name: 'Pro', price: 19, quoteLimit: 150, users: 1, description: 'Recordatorios automáticos, logo y plantillas.' },
+  business: { name: 'Business', price: 39, quoteLimit: 500, users: 3, description: 'Mayor volumen, tres usuarios y reportes.' }
+};
+
+const ACTIVE_BILLING_STATUSES = new Set(['active', 'trialing', 'on_trial', 'paid']);
 
 let supabaseClient = null;
 let mode = 'local';
@@ -10,6 +20,11 @@ let state = {
   company: null,
   clients: [],
   quotes: [],
+  billing: null,
+  affiliate: null,
+  referrals: [],
+  commissions: [],
+  pendingReferralCode: captureReferralCode(),
   authMessage: '',
   activeAuthTab: 'login'
 };
@@ -31,8 +46,33 @@ const localDefaultState = {
   session: null,
   company: { ...defaultCompany },
   clients: [],
-  quotes: []
+  quotes: [],
+  billing: null,
+  affiliate: null,
+  referrals: [],
+  commissions: []
 };
+
+function sanitizeReferralCode(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24);
+}
+
+function captureReferralCode() {
+  try {
+    const url = new URL(window.location.href);
+    const hashQuery = window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '';
+    const hashParams = new URLSearchParams(hashQuery);
+    const code = sanitizeReferralCode(url.searchParams.get('ref') || url.searchParams.get('affiliate') || hashParams.get('ref'));
+    if (code) localStorage.setItem(REFERRAL_STORAGE_KEY, code);
+    return code || localStorage.getItem(REFERRAL_STORAGE_KEY) || '';
+  } catch (_error) {
+    return localStorage.getItem(REFERRAL_STORAGE_KEY) || '';
+  }
+}
+
+function getPendingReferralCode() {
+  return sanitizeReferralCode(state.pendingReferralCode || localStorage.getItem(REFERRAL_STORAGE_KEY) || '');
+}
 
 init();
 
@@ -99,7 +139,11 @@ function loadLocalState() {
       ...parsed,
       company: { ...defaultCompany, ...(parsed.company || {}) },
       clients: parsed.clients || [],
-      quotes: parsed.quotes || []
+      quotes: parsed.quotes || [],
+      billing: parsed.billing || null,
+      affiliate: parsed.affiliate || null,
+      referrals: parsed.referrals || [],
+      commissions: parsed.commissions || []
     };
   } catch (error) {
     console.error(error);
@@ -113,7 +157,11 @@ function saveLocalState() {
     session: state.session,
     company: state.company,
     clients: state.clients,
-    quotes: state.quotes
+    quotes: state.quotes,
+    billing: state.billing,
+    affiliate: state.affiliate,
+    referrals: state.referrals,
+    commissions: state.commissions
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -138,14 +186,39 @@ async function loadRemoteData() {
 
     const company = await getOrCreateRemoteCompany();
     state.company = normalizeCompany(company);
+    await claimPendingReferral(state.company.id);
 
-    const [{ data: clients, error: clientsError }, { data: quotes, error: quotesError }] = await Promise.all([
+    const [
+      { data: clients, error: clientsError },
+      { data: quotes, error: quotesError },
+      { data: billingRows, error: billingError },
+      { data: affiliate, error: affiliateError }
+    ] = await Promise.all([
       supabaseClient.from('clients').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }),
-      supabaseClient.from('quotes').select('*, quote_items(*)').eq('company_id', state.company.id).order('created_at', { ascending: false })
+      supabaseClient.from('quotes').select('*, quote_items(*)').eq('company_id', state.company.id).order('created_at', { ascending: false }),
+      supabaseClient.from('billing_subscriptions').select('*').eq('company_id', state.company.id).order('updated_at', { ascending: false }).limit(1),
+      supabaseClient.from('affiliates').select('*').eq('user_id', state.session.id).maybeSingle()
     ]);
 
     if (clientsError) throw clientsError;
     if (quotesError) throw quotesError;
+    if (billingError) throw billingError;
+    if (affiliateError) throw affiliateError;
+
+    state.billing = billingRows?.[0] || null;
+    state.affiliate = affiliate || null;
+
+    if (state.affiliate?.id) {
+      const [{ data: referrals }, { data: commissions }] = await Promise.all([
+        supabaseClient.from('referrals').select('*').eq('affiliate_id', state.affiliate.id).order('created_at', { ascending: false }),
+        supabaseClient.from('commissions').select('*').eq('affiliate_id', state.affiliate.id).order('created_at', { ascending: false })
+      ]);
+      state.referrals = referrals || [];
+      state.commissions = commissions || [];
+    } else {
+      state.referrals = [];
+      state.commissions = [];
+    }
 
     state.clients = clients || [];
     state.quotes = (quotes || []).map(q => ({
@@ -199,6 +272,71 @@ async function getOrCreateRemoteCompany() {
 
 function normalizeCompany(company) {
   return { ...defaultCompany, ...(company || {}) };
+}
+
+
+async function claimPendingReferral(companyId) {
+  const code = getPendingReferralCode();
+  if (!code || mode !== 'supabase' || !supabaseClient || !companyId) return;
+  const { error } = await supabaseClient.rpc('claim_referral', {
+    ref_code: code,
+    target_company_id: companyId
+  });
+  if (!error) {
+    localStorage.removeItem(REFERRAL_STORAGE_KEY);
+    state.pendingReferralCode = '';
+  } else {
+    console.warn('No se pudo registrar referido:', error.message);
+  }
+}
+
+function hasUsableSubscription() {
+  const status = state.billing?.status || state.company?.subscription_status || 'inactive';
+  const periodEnd = state.billing?.current_period_end || state.company?.plan_current_period_end;
+  if (ACTIVE_BILLING_STATUSES.has(status)) return true;
+  if (periodEnd && new Date(periodEnd).getTime() > Date.now()) return true;
+  return false;
+}
+
+function getEffectivePlanKey() {
+  const plan = String(state.billing?.plan || state.company?.plan || 'free').toLowerCase();
+  if (plan === 'free') return 'free';
+  return hasUsableSubscription() ? (PLAN_CATALOG[plan] ? plan : 'free') : 'free';
+}
+
+function getEffectivePlan() {
+  return PLAN_CATALOG[getEffectivePlanKey()] || PLAN_CATALOG.free;
+}
+
+function getMonthStartISO() {
+  const date = new Date();
+  return new Date(date.getFullYear(), date.getMonth(), 1).toISOString();
+}
+
+function getMonthlyQuoteCount() {
+  const start = getMonthStartISO();
+  return state.quotes.filter(q => !q.created_at || String(q.created_at) >= start).length;
+}
+
+function getPlanUsage() {
+  const planKey = getEffectivePlanKey();
+  const plan = getEffectivePlan();
+  const used = getMonthlyQuoteCount();
+  const limit = Number(plan.quoteLimit || 0);
+  const remaining = Math.max(0, limit - used);
+  const percent = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return { planKey, plan, used, limit, remaining, percent };
+}
+
+function canCreateQuote() {
+  const usage = getPlanUsage();
+  return usage.used < usage.limit;
+}
+
+function planStatusText() {
+  const plan = getEffectivePlan();
+  const rawStatus = state.billing?.status || state.company?.subscription_status || 'inactive';
+  return `${plan.name} · ${rawStatus}`;
 }
 
 function getRoute() {
@@ -311,9 +449,9 @@ function renderPublic(route) {
 
         <section class="hero">
           <div>
-            <span class="eyebrow">Fase 2 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
-            <h1>Cotizaciones profesionales con datos en la nube.</h1>
-            <p>Crea clientes, cotizaciones y PDF. La fase 2 ya está preparada para autenticación real, PostgreSQL y separación de datos por empresa.</p>
+            <span class="eyebrow">Fase 3 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
+            <h1>Cotizaciones profesionales con pagos, planes y referidos.</h1>
+            <p>Crea clientes, cotizaciones y PDF. La fase 3 agrega límites por plan, suscripciones, afiliados y webhooks seguros para pagos.</p>
             <div class="hero-actions">
               <button class="btn primary" data-route="auth">Crear cuenta</button>
               <button class="btn secondary" data-action="start-demo">Demo local</button>
@@ -321,7 +459,8 @@ function renderPublic(route) {
             <div class="bullets">
               <span>Auth por correo y contraseña cuando Supabase está configurado.</span>
               <span>Base de datos PostgreSQL con RLS para aislar empresas.</span>
-              <span>Modo local conservado para pruebas rápidas en VS Code.</span>
+              <span>Planes Starter, Pro y Business con bloqueo mensual.</span>
+              <span>Referidos con comisión recurrente por 12 meses.</span>
             </div>
           </div>
 
@@ -397,12 +536,14 @@ function renderApp(route) {
           ${navLink('quote-new', 'Nueva cotización')}
           ${navLink('clients', 'Clientes')}
           ${navLink('settings', 'Empresa')}
+          ${navLink('billing', 'Planes y pagos')}
+          ${navLink('affiliates', 'Referidos')}
           ${navLink('integrations', 'Integraciones')}
         </nav>
         <div class="sidebar-footer">
           <strong>${escapeHtml(state.company?.name || 'Mi empresa')}</strong><br />
           ${mode === 'supabase' ? 'Modo Supabase' : 'Modo demo local'}<br />
-          Plan: ${escapeHtml(state.company?.plan || 'free')} · ${escapeHtml(state.company?.subscription_status || 'trialing')}<br />
+          Plan: ${escapeHtml(planStatusText())}<br />
           <button class="btn secondary small" data-action="logout" style="margin-top:12px;">Salir</button>
         </div>
       </aside>
@@ -424,6 +565,8 @@ function renderRoute(route) {
     case 'quote-new': return renderQuoteForm();
     case 'clients': return renderClients();
     case 'settings': return renderSettings();
+    case 'billing': return renderBilling();
+    case 'affiliates': return renderAffiliates();
     case 'integrations': return renderIntegrations();
     case 'dashboard':
     default: return renderDashboard();
@@ -462,9 +605,29 @@ function renderDashboard() {
       <div class="card metric"><span>Monto aceptado</span><strong>${money(totalAccepted)}</strong></div>
     </section>
 
+    ${renderUsageCard()}
+
     <section class="card" style="margin-top:18px;">
       <h2>Últimas cotizaciones</h2>
       ${latest.length ? renderQuotesTable(latest, true) : `<div class="empty">Todavía no tienes cotizaciones.</div>`}
+    </section>
+  `;
+}
+
+
+function renderUsageCard() {
+  const usage = getPlanUsage();
+  return `
+    <section class="card" style="margin-top:18px;">
+      <div class="page-header" style="margin-bottom:12px;">
+        <div>
+          <h2>Uso mensual del plan</h2>
+          <p>${escapeHtml(usage.plan.name)} permite ${usage.limit} cotizaciones al mes.</p>
+        </div>
+        <button class="btn secondary" data-route="billing">Ver planes</button>
+      </div>
+      <div class="usage-bar"><span style="width:${usage.percent}%"></span></div>
+      <p class="help">Usadas este mes: <strong>${usage.used}</strong> / ${usage.limit}. Disponibles: ${usage.remaining}.</p>
     </section>
   `;
 }
@@ -613,6 +776,8 @@ function renderQuoteForm(id) {
     notes: 'Gracias por considerar nuestra propuesta. Esta cotización está sujeta a disponibilidad y vigencia indicada.',
     items: [{ id: uid('item'), description: '', quantity: 1, unit_price: 0, total: 0 }]
   };
+  const limitReached = !editing && !canCreateQuote();
+  const usage = getPlanUsage();
 
   return `
     <div class="page-header">
@@ -624,6 +789,7 @@ function renderQuoteForm(id) {
     </div>
 
     ${state.clients.length ? '' : `<div class="notice warning">Primero debes crear un cliente para asociar la cotización.</div>`}
+    ${limitReached ? `<div class="notice warning">Llegaste al límite del plan ${escapeHtml(usage.plan.name)}: ${usage.used}/${usage.limit} cotizaciones este mes. Sube de plan para crear más.</div>` : ''}
 
     <form data-form="quote" data-id="${escapeHtml(current.id)}" class="form-grid">
       <section class="card">
@@ -665,7 +831,7 @@ function renderQuoteForm(id) {
       </section>
 
       <div class="header-actions">
-        <button class="btn primary" type="submit" ${state.clients.length ? '' : 'disabled'}>Guardar cotización</button>
+        <button class="btn primary" type="submit" ${state.clients.length && !limitReached ? '' : 'disabled'}>Guardar cotización</button>
         ${editing ? `<button class="btn secondary" type="button" data-action="pdf" data-id="${current.id}">Generar PDF</button>` : ''}
       </div>
     </form>
@@ -767,7 +933,7 @@ function renderIntegrations() {
     <div class="page-header">
       <div>
         <h1>Integraciones</h1>
-        <p>Estado técnico de la fase 2 y preparación para las próximas fases.</p>
+        <p>Estado técnico de Fase 3: pagos, referidos, webhooks y automatizaciones.</p>
       </div>
     </div>
 
@@ -775,20 +941,143 @@ function renderIntegrations() {
       <div class="card">
         <h2>Base de datos</h2>
         <p><strong>Estado:</strong> ${mode === 'supabase' ? 'Supabase conectado' : 'modo local'}</p>
-        <p class="help">Para activar Supabase, ejecuta el SQL incluido en <code>supabase/schema.sql</code> y configura <code>config.js</code>.</p>
+        <p class="help">Ejecuta <code>supabase/schema_phase3.sql</code> después del schema base para activar límites, RPC de referidos y seguridad de campos de plan.</p>
       </div>
       <div class="card">
-        <h2>Próximas integraciones</h2>
+        <h2>Backend seguro</h2>
         <div class="bullets">
-          <span>Pagos y planes con Lemon Squeezy o Paddle.</span>
-          <span>Referidos con comisión configurable.</span>
-          <span>Emails automáticos con Resend.</span>
-          <span>Links públicos seguros con Worker o Edge Function.</span>
+          <span><code>create-checkout</code> crea checkout con metadata segura.</span>
+          <span><code>billing-webhook</code> procesa pagos y actualiza planes.</span>
+          <span>Las secret keys quedan solo en Supabase Edge Functions.</span>
+          <span>Resend queda preparado para una fase posterior de emails.</span>
         </div>
       </div>
     </section>
   `;
 }
+
+function renderBilling() {
+  const usage = getPlanUsage();
+  const provider = config.billingProvider || 'lemon_squeezy';
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Planes y pagos</h1>
+        <p>Control de suscripción, límites mensuales y checkout seguro.</p>
+      </div>
+    </div>
+
+    ${renderUsageCard()}
+
+    <section class="grid cols-3" style="margin-top:18px;">
+      ${['starter','pro','business'].map(planKey => renderPlanCard(planKey, usage.planKey, provider)).join('')}
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Estado de suscripción</h2>
+      <p><strong>Plan efectivo:</strong> ${escapeHtml(usage.plan.name)}</p>
+      <p><strong>Estado proveedor:</strong> ${escapeHtml(state.billing?.status || state.company?.subscription_status || 'inactive')}</p>
+      <p><strong>Vigencia:</strong> ${escapeHtml(state.billing?.current_period_end || state.company?.plan_current_period_end || 'Sin periodo activo')}</p>
+      <p class="help">El plan solo debe cambiar por webhook de pago o por actualización administrativa. El frontend no puede marcar una empresa como pagada.</p>
+    </section>
+  `;
+}
+
+function renderPlanCard(planKey, currentPlanKey, provider) {
+  const plan = PLAN_CATALOG[planKey];
+  const isCurrent = planKey === currentPlanKey;
+  return `
+    <div class="card plan-card ${isCurrent ? 'current' : ''}">
+      <div class="plan-topline">${isCurrent ? 'Plan actual' : provider}</div>
+      <h2>${escapeHtml(plan.name)}</h2>
+      <div class="plan-price">US$${plan.price}<span>/mes</span></div>
+      <p>${escapeHtml(plan.description)}</p>
+      <div class="bullets">
+        <span>${plan.quoteLimit} cotizaciones al mes.</span>
+        <span>${plan.users} usuario${plan.users > 1 ? 's' : ''} incluido${plan.users > 1 ? 's' : ''}.</span>
+        <span>${planKey === 'starter' ? 'PDF y WhatsApp.' : planKey === 'pro' ? 'Recordatorios, logo y plantillas.' : 'Reportes y uso por equipo.'}</span>
+      </div>
+      <button class="btn ${isCurrent ? 'secondary' : 'primary'} full" data-action="checkout" data-plan="${planKey}" ${isCurrent ? 'disabled' : ''}>
+        ${isCurrent ? 'Activo' : 'Elegir plan'}
+      </button>
+    </div>
+  `;
+}
+
+function renderAffiliates() {
+  const affiliate = state.affiliate;
+  const code = affiliate?.code || suggestAffiliateCode();
+  const baseUrl = location.origin + location.pathname;
+  const link = affiliate ? `${baseUrl}?ref=${encodeURIComponent(affiliate.code)}` : '';
+  const pending = state.commissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const available = state.commissions.filter(c => c.status === 'available').reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const paid = state.commissions.filter(c => c.status === 'paid').reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Referidos</h1>
+        <p>Programa de afiliados: 20% recurrente por 12 meses. Partners aprobados pueden llegar a 30%.</p>
+      </div>
+    </div>
+
+    ${affiliate ? `
+      <section class="grid cols-3">
+        <div class="card metric"><span>Referidos</span><strong>${state.referrals.length}</strong></div>
+        <div class="card metric"><span>Pendiente</span><strong>${money(pending)}</strong></div>
+        <div class="card metric"><span>Disponible</span><strong>${money(available)}</strong></div>
+      </section>
+
+      <section class="card" style="margin-top:18px;">
+        <h2>Tu link de referido</h2>
+        <div class="copy-line"><input readonly value="${escapeHtml(link)}" /><button class="btn secondary" data-action="copy-affiliate-link">Copiar</button></div>
+        <p class="help">Comisión: ${(Number(affiliate.commission_rate || 0.2) * 100).toFixed(0)}% durante ${affiliate.commission_months || 12} meses. Disponible 30 días después del pago confirmado.</p>
+      </section>
+
+      <section class="card" style="margin-top:18px;">
+        <h2>Comisiones</h2>
+        ${state.commissions.length ? renderCommissionsTable() : `<div class="empty">Todavía no hay comisiones generadas.</div>`}
+        <p class="help" style="margin-top:12px;">Pagado histórico: ${money(paid)}. Los payouts siguen manuales en el MVP.</p>
+      </section>
+    ` : `
+      <section class="card">
+        <h2>Activar afiliado</h2>
+        <form data-form="affiliate" class="form-grid two">
+          <div class="field"><label>Código</label><input name="code" value="${escapeHtml(code)}" maxlength="24" required /></div>
+          <div class="field"><label>Email de pago</label><input name="payout_email" type="email" placeholder="tu@email.com" /></div>
+          <button class="btn primary" type="submit">Crear código de afiliado</button>
+        </form>
+        <p class="help">El código queda único. La comisión normal se crea en 20%; subir a Partner 30% se hace manualmente desde Supabase.</p>
+      </section>
+    `}
+  `;
+}
+
+function renderCommissionsTable() {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fecha</th><th>Monto</th><th>Estado</th><th>Disponible</th></tr></thead>
+        <tbody>
+          ${state.commissions.map(c => `
+            <tr>
+              <td>${escapeHtml((c.created_at || '').slice(0, 10))}</td>
+              <td>${money(c.amount)}</td>
+              <td>${escapeHtml(c.status)}</td>
+              <td>${escapeHtml((c.available_at || '').slice(0, 10))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function suggestAffiliateCode() {
+  const emailPrefix = String(state.session?.email || 'partner').split('@')[0];
+  return sanitizeReferralCode(emailPrefix).slice(0, 16) || `CF${Date.now().toString().slice(-6)}`;
+}
+
 
 async function handleAuth(form) {
   if (mode !== 'supabase') {
@@ -964,6 +1253,12 @@ async function saveQuote(form) {
   const existingQuote = quote.id ? state.quotes.find(q => q.id === quote.id) : null;
   if (!quote.items.length) {
     toast('Agrega al menos un item con descripción.');
+    return;
+  }
+  if (!quote.id && !canCreateQuote()) {
+    toast('Llegaste al límite mensual de tu plan.');
+    setRoute('billing');
+    render();
     return;
   }
 
@@ -1195,6 +1490,46 @@ function generatePdf(id) {
   doc.save(`${quote.quote_number || 'cotizacion'}.pdf`);
 }
 
+
+async function startCheckout(planKey) {
+  if (mode !== 'supabase') {
+    toast('Publica y entra con Supabase antes de cobrar planes reales.');
+    return;
+  }
+  if (!PLAN_CATALOG[planKey] || planKey === 'free') {
+    toast('Plan inválido.');
+    return;
+  }
+  const { data, error } = await supabaseClient.functions.invoke('create-checkout', {
+    body: { plan: planKey, referral_code: getPendingReferralCode() }
+  });
+  if (error) throw error;
+  if (!data?.url) throw new Error('El backend no devolvió URL de checkout. Revisa variables de Lemon Squeezy.');
+  window.location.href = data.url;
+}
+
+async function saveAffiliate(form) {
+  if (mode !== 'supabase') {
+    toast('Los referidos reales requieren Supabase.');
+    return;
+  }
+  const fd = new FormData(form);
+  const requested_code = sanitizeReferralCode(fd.get('code'));
+  const payout_email = String(fd.get('payout_email') || '').trim();
+  const { error } = await supabaseClient.rpc('create_my_affiliate', { requested_code, payout_email });
+  if (error) throw error;
+  await loadRemoteData();
+  setRoute('affiliates');
+  toast('Afiliado creado.');
+}
+
+async function copyAffiliateLink() {
+  if (!state.affiliate?.code) return;
+  const link = `${location.origin}${location.pathname}?ref=${encodeURIComponent(state.affiliate.code)}`;
+  await navigator.clipboard.writeText(link);
+  toast('Link de referido copiado.');
+}
+
 app.addEventListener('click', async (event) => {
   const route = event.target.closest('[data-route]')?.dataset.route;
   const actionEl = event.target.closest('[data-action]');
@@ -1215,6 +1550,7 @@ app.addEventListener('click', async (event) => {
   if (!actionEl) return;
   const action = actionEl.dataset.action;
   const id = actionEl.dataset.id;
+  const plan = actionEl.dataset.plan;
 
   try {
     if (action === 'start-demo') startDemo();
@@ -1225,6 +1561,8 @@ app.addEventListener('click', async (event) => {
     if (action === 'delete-quote') await deleteQuote(id);
     if (action === 'pdf') generatePdf(id);
     if (action === 'copy-whatsapp') await copyWhatsapp(id);
+    if (action === 'checkout') await startCheckout(plan);
+    if (action === 'copy-affiliate-link') await copyAffiliateLink();
   } catch (error) {
     console.error(error);
     toast(error.message || 'Ocurrió un error.');
@@ -1240,6 +1578,7 @@ app.addEventListener('submit', async (event) => {
     if (type === 'company') await saveCompany(form);
     if (type === 'client') await saveClient(form);
     if (type === 'quote') await saveQuote(form);
+    if (type === 'affiliate') await saveAffiliate(form);
   } catch (error) {
     console.error(error);
     toast(error.message || 'No se pudo guardar.');

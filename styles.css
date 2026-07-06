@@ -150,3 +150,14 @@ tr:last-child td { border-bottom: 0; }
 code { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1px 5px; }
 button:disabled, input:disabled { opacity: .6; cursor: not-allowed; }
 .printable-quote { max-width: 980px; }
+
+.usage-bar { height: 12px; border-radius: 999px; background: #e5e7eb; overflow: hidden; margin: 10px 0 8px; }
+.usage-bar span { display: block; height: 100%; background: var(--primary); border-radius: inherit; }
+.plan-card { display: grid; gap: 12px; align-content: start; }
+.plan-card.current { border-color: rgba(15,118,110,.45); box-shadow: 0 12px 32px rgba(15,118,110,.10); }
+.plan-topline { color: var(--muted); font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
+.plan-price { font-size: 36px; font-weight: 900; letter-spacing: -0.04em; }
+.plan-price span { color: var(--muted); font-size: 15px; font-weight: 700; letter-spacing: 0; }
+.copy-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.copy-line input { border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; width: 100%; background: #f8fafc; color: var(--text); }
+@media (max-width: 900px) { .copy-line { grid-template-columns: 1fr; } }
