@@ -139,3 +139,14 @@ tr:last-child td { border-bottom: 0; }
   .main { padding: 0; }
   .card { box-shadow: none; border: 0; }
 }
+
+.loading-card { max-width: 440px; margin: 12vh auto 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 28px; display: grid; gap: 14px; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.auth-tab { border: 1px solid var(--border); background: #fff; color: var(--text); border-radius: 12px; padding: 10px; font-weight: 800; }
+.auth-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.notice { background: #eff6ff; color: #1e3a8a; border: 1px solid #bfdbfe; border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; line-height: 1.45; }
+.notice.warning { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+.copy-box { width: 100%; min-height: 105px; border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 12px; resize: vertical; }
+code { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1px 5px; }
+button:disabled, input:disabled { opacity: .6; cursor: not-allowed; }
+.printable-quote { max-width: 980px; }
