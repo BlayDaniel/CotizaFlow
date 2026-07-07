@@ -3,5 +3,7 @@
 window.COTIZAFLOW_CONFIG = {
   supabaseUrl: 'https://oqcdbrwoprdqahkauglh.supabase.co',
   supabaseAnonKey: 'sb_publishable_AQ8xq0yvth-JEQn2oqz5Hg_Trtm-YfA',
-  appName: 'CotizaFlow'
+  appName: 'CotizaFlow',
+  billingProvider: 'lemon_squeezy',
+  salesEmail: 'juan.dmzjob@gmail.com'
 };
