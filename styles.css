@@ -161,3 +161,56 @@ button:disabled, input:disabled { opacity: .6; cursor: not-allowed; }
 .copy-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
 .copy-line input { border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; width: 100%; background: #f8fafc; color: var(--text); }
 @media (max-width: 900px) { .copy-line { grid-template-columns: 1fr; } }
+
+/* Fase 4: link público, eventos y seguimiento */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.timeline-item {
+  border-left: 3px solid rgba(99, 102, 241, 0.45);
+  padding: 10px 12px;
+  background: rgba(148, 163, 184, 0.08);
+  border-radius: 10px;
+}
+
+.timeline-item strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.timeline-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin-bottom: 6px;
+}
+
+.public-quote-page .landing-inner {
+  max-width: 980px;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .topbar,
+  .public-quote-page .card:not(.printable-quote),
+  .nav-actions {
+    display: none !important;
+  }
+
+  .landing-inner,
+  .public-quote-page {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .printable-quote {
+    box-shadow: none !important;
+    border: 0 !important;
+  }
+}

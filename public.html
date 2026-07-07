@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cotización | CotizaFlow</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="public-app" class="app-page">
+    <main class="landing app-page">
+      <div class="loading-card">
+        <div class="brand"><span class="brand-mark">C</span> CotizaFlow</div>
+        <p>Cargando cotización...</p>
+      </div>
+    </main>
+  </div>
+
+  <script src="config.js"></script>
+  <script>
+    const publicApp = document.getElementById('public-app');
+    const config = window.COTIZAFLOW_CONFIG || {};
+    let currentPayload = null;
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function money(value, currency = 'USD') {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(value || 0));
+    }
+
+    function totals(quote) {
+      const subtotal = (quote.items || []).reduce((sum, item) => sum + Number(item.total || 0), 0);
+      const tax = subtotal * (Number(quote.tax_rate || 0) / 100);
+      return { subtotal, tax, total: subtotal + tax };
+    }
+
+    function statusLabel(status) {
+      return { draft: 'Borrador', sent: 'Enviada', accepted: 'Aceptada', rejected: 'Rechazada', expired: 'Vencida' }[status] || status;
+    }
+
+    async function callFunction(name, body) {
+      if (!config.supabaseUrl || !config.supabaseAnonKey) throw new Error('Supabase no está configurado en config.js.');
+      const res = await fetch(`${config.supabaseUrl.replace(/\/$/, '')}/functions/v1/${name}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': config.supabaseAnonKey,
+          'Authorization': `Bearer ${config.supabaseAnonKey}`
+        },
+        body: JSON.stringify(body || {})
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `Error ${res.status}`);
+      return json;
+    }
+
+    function renderError(message) {
+      publicApp.innerHTML = `
+        <main class="landing app-page">
+          <div class="landing-inner">
+            <header class="topbar"><div class="brand"><span class="brand-mark">C</span> CotizaFlow</div></header>
+            <section class="card"><h1>No se pudo abrir la cotización</h1><p>${escapeHtml(message)}</p></section>
+          </div>
+        </main>`;
+    }
+
+    function renderQuote(payload) {
+      currentPayload = payload;
+      const { quote, company, client } = payload;
+      const t = totals(quote);
+      const currency = quote.currency || company?.currency || 'USD';
+      const isClosed = ['accepted', 'rejected', 'expired'].includes(quote.status);
+
+      publicApp.innerHTML = `
+        <main class="landing app-page public-quote-page">
+          <div class="landing-inner">
+            <header class="topbar">
+              <div class="brand"><span class="brand-mark">C</span> CotizaFlow</div>
+              <div class="nav-actions"><button class="btn secondary" data-action="print">Imprimir / PDF</button></div>
+            </header>
+
+            <section class="card printable-quote">
+              <div class="quote-preview-header">
+                <div>
+                  <h2>${escapeHtml(company?.name || '')}</h2>
+                  <p class="help">${escapeHtml(company?.tax_id || '')} · ${escapeHtml(company?.email || '')} · ${escapeHtml(company?.phone || '')}</p>
+                  <p class="help">${escapeHtml(company?.address || '')}</p>
+                </div>
+                <div style="text-align:right;">
+                  <h3>Cotización</h3>
+                  <strong>${escapeHtml(quote.quote_number)}</strong><br>
+                  <span class="badge ${escapeHtml(quote.status)}">${escapeHtml(statusLabel(quote.status))}</span><br>
+                  <span class="help">Válida hasta ${escapeHtml(quote.valid_until || '')}</span>
+                </div>
+              </div>
+
+              <div class="grid cols-2" style="margin-top:18px;">
+                <div>
+                  <h3>Cliente</h3>
+                  <p><strong>${escapeHtml(client?.name || '')}</strong><br>${escapeHtml(client?.email || '')}<br>${escapeHtml(client?.phone || '')}</p>
+                </div>
+                <div>
+                  <h3>Total</h3>
+                  <div class="plan-price">${money(t.total, currency)}</div>
+                </div>
+              </div>
+
+              <div class="table-wrap" style="margin-top:18px;">
+                <table>
+                  <thead><tr><th>Descripción</th><th>Cant.</th><th>Precio</th><th>Total</th></tr></thead>
+                  <tbody>
+                    ${(quote.items || []).map(item => `
+                      <tr>
+                        <td>${escapeHtml(item.description)}</td>
+                        <td>${Number(item.quantity || 0)}</td>
+                        <td>${money(item.unit_price, currency)}</td>
+                        <td>${money(item.total, currency)}</td>
+                      </tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="summary-box" style="margin-top:18px;">
+                <div class="summary-line"><span>Subtotal</span><span>${money(t.subtotal, currency)}</span></div>
+                <div class="summary-line"><span>Impuesto</span><span>${money(t.tax, currency)}</span></div>
+                <div class="summary-line total"><span>Total</span><span>${money(t.total, currency)}</span></div>
+              </div>
+
+              ${quote.notes ? `<p style="margin-top:24px;">${escapeHtml(quote.notes)}</p>` : ''}
+            </section>
+
+            <section class="card" style="margin-top:18px;">
+              <h2>Responder cotización</h2>
+              ${isClosed ? `<p>Esta cotización ya está en estado <strong>${escapeHtml(statusLabel(quote.status))}</strong>.</p>` : `
+                <form data-form="public-action" class="form-grid two">
+                  <div class="field"><label>Nombre</label><input name="actor_name" placeholder="Tu nombre" /></div>
+                  <div class="field"><label>Correo</label><input name="actor_email" type="email" placeholder="tu@email.com" /></div>
+                  <div class="field" style="grid-column:1/-1;"><label>Comentario opcional</label><textarea name="comment" placeholder="Mensaje para el proveedor"></textarea></div>
+                  <button class="btn primary" type="submit" data-public-action="accepted">Aceptar cotización</button>
+                  <button class="btn danger" type="submit" data-public-action="rejected">Rechazar cotización</button>
+                </form>`}
+              <div id="public-message" class="notice hidden"></div>
+            </section>
+          </div>
+        </main>`;
+    }
+
+    async function loadQuote() {
+      try {
+        const params = new URLSearchParams(location.search);
+        const token = params.get('t') || params.get('token');
+        if (!token) throw new Error('Falta el token de la cotización.');
+        const payload = await callFunction('get-public-quote', { token });
+        renderQuote(payload);
+      } catch (error) {
+        console.error(error);
+        renderError(error.message || 'Link inválido.');
+      }
+    }
+
+    async function sendAction(form, action) {
+      const params = new URLSearchParams(location.search);
+      const token = params.get('t') || params.get('token');
+      const fd = new FormData(form);
+      await callFunction('quote-public-action', {
+        token,
+        action,
+        actor_name: fd.get('actor_name'),
+        actor_email: fd.get('actor_email'),
+        comment: fd.get('comment')
+      });
+      const msg = document.getElementById('public-message');
+      msg.classList.remove('hidden');
+      msg.textContent = action === 'accepted' ? 'Cotización aceptada. El proveedor fue notificado en CotizaFlow.' : 'Respuesta registrada. El proveedor podrá verla en CotizaFlow.';
+      await loadQuote();
+    }
+
+    publicApp.addEventListener('click', async (event) => {
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'print') {
+        const params = new URLSearchParams(location.search);
+        const token = params.get('t') || params.get('token');
+        callFunction('quote-public-action', { token, action: 'pdf_downloaded' }).catch(console.warn);
+        window.print();
+      }
+    });
+
+    publicApp.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.target;
+      if (form.dataset.form !== 'public-action') return;
+      const action = event.submitter?.dataset.publicAction || 'commented';
+      try {
+        await sendAction(form, action);
+      } catch (error) {
+        console.error(error);
+        alert(error.message || 'No se pudo registrar la respuesta.');
+      }
+    });
+
+    loadQuote();
+  </script>
+</body>
+</html>

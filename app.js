@@ -24,6 +24,10 @@ let state = {
   affiliate: null,
   referrals: [],
   commissions: [],
+  publicLinks: [],
+  quoteEvents: [],
+  messageLogs: [],
+  messageTemplates: [],
   pendingReferralCode: captureReferralCode(),
   authMessage: '',
   activeAuthTab: 'login'
@@ -50,7 +54,11 @@ const localDefaultState = {
   billing: null,
   affiliate: null,
   referrals: [],
-  commissions: []
+  commissions: [],
+  publicLinks: [],
+  quoteEvents: [],
+  messageLogs: [],
+  messageTemplates: []
 };
 
 function sanitizeReferralCode(value) {
@@ -143,7 +151,11 @@ function loadLocalState() {
       billing: parsed.billing || null,
       affiliate: parsed.affiliate || null,
       referrals: parsed.referrals || [],
-      commissions: parsed.commissions || []
+      commissions: parsed.commissions || [],
+      publicLinks: parsed.publicLinks || [],
+      quoteEvents: parsed.quoteEvents || [],
+      messageLogs: parsed.messageLogs || [],
+      messageTemplates: parsed.messageTemplates || []
     };
   } catch (error) {
     console.error(error);
@@ -161,7 +173,11 @@ function saveLocalState() {
     billing: state.billing,
     affiliate: state.affiliate,
     referrals: state.referrals,
-    commissions: state.commissions
+    commissions: state.commissions,
+    publicLinks: state.publicLinks,
+    quoteEvents: state.quoteEvents,
+    messageLogs: state.messageLogs,
+    messageTemplates: state.messageTemplates
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -187,26 +203,43 @@ async function loadRemoteData() {
     const company = await getOrCreateRemoteCompany();
     state.company = normalizeCompany(company);
     await claimPendingReferral(state.company.id);
+    await seedDefaultTemplates(state.company.id);
 
     const [
       { data: clients, error: clientsError },
       { data: quotes, error: quotesError },
       { data: billingRows, error: billingError },
-      { data: affiliate, error: affiliateError }
+      { data: affiliate, error: affiliateError },
+      { data: publicLinks, error: publicLinksError },
+      { data: quoteEvents, error: quoteEventsError },
+      { data: messageLogs, error: messageLogsError },
+      { data: messageTemplates, error: messageTemplatesError }
     ] = await Promise.all([
       supabaseClient.from('clients').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }),
       supabaseClient.from('quotes').select('*, quote_items(*)').eq('company_id', state.company.id).order('created_at', { ascending: false }),
       supabaseClient.from('billing_subscriptions').select('*').eq('company_id', state.company.id).order('updated_at', { ascending: false }).limit(1),
-      supabaseClient.from('affiliates').select('*').eq('user_id', state.session.id).maybeSingle()
+      supabaseClient.from('affiliates').select('*').eq('user_id', state.session.id).maybeSingle(),
+      supabaseClient.from('quote_public_links').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }),
+      supabaseClient.from('quote_events').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }).limit(200),
+      supabaseClient.from('message_logs').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }).limit(200),
+      supabaseClient.from('message_templates').select('*').eq('company_id', state.company.id).order('channel', { ascending: true }).order('name', { ascending: true })
     ]);
 
     if (clientsError) throw clientsError;
     if (quotesError) throw quotesError;
     if (billingError) throw billingError;
     if (affiliateError) throw affiliateError;
+    if (publicLinksError) throw publicLinksError;
+    if (quoteEventsError) throw quoteEventsError;
+    if (messageLogsError) throw messageLogsError;
+    if (messageTemplatesError) throw messageTemplatesError;
 
     state.billing = billingRows?.[0] || null;
     state.affiliate = affiliate || null;
+    state.publicLinks = publicLinks || [];
+    state.quoteEvents = quoteEvents || [];
+    state.messageLogs = messageLogs || [];
+    state.messageTemplates = messageTemplates || [];
 
     if (state.affiliate?.id) {
       const [{ data: referrals }, { data: commissions }] = await Promise.all([
@@ -288,6 +321,15 @@ async function claimPendingReferral(companyId) {
   } else {
     console.warn('No se pudo registrar referido:', error.message);
   }
+}
+
+async function seedDefaultTemplates(companyId) {
+  if (mode !== 'supabase' || !supabaseClient || !companyId) return;
+  const seededKey = `cotizaflow_templates_seeded_${companyId}`;
+  if (sessionStorage.getItem(seededKey)) return;
+  const { error } = await supabaseClient.rpc('seed_default_message_templates', { target_company_id: companyId });
+  if (error) console.warn('No se pudieron crear plantillas base:', error.message);
+  sessionStorage.setItem(seededKey, '1');
 }
 
 function hasUsableSubscription() {
@@ -410,6 +452,70 @@ function getClient(clientId) {
   return state.clients.find(c => c.id === clientId) || null;
 }
 
+function appBaseUrl() {
+  const path = location.pathname.endsWith('/') ? location.pathname : location.pathname.replace(/\/[^/]*$/, '/');
+  return `${location.origin}${path}`;
+}
+
+function publicUrlFromToken(token) {
+  return `${appBaseUrl()}public.html?t=${encodeURIComponent(token)}`;
+}
+
+function getActivePublicLink(quoteId) {
+  const now = Date.now();
+  return state.publicLinks
+    .filter(link => link.quote_id === quoteId && !link.revoked_at && (!link.expires_at || new Date(link.expires_at).getTime() > now))
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0] || null;
+}
+
+function getQuoteEvents(quoteId) {
+  return state.quoteEvents.filter(e => e.quote_id === quoteId).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+}
+
+function getQuoteMessageLogs(quoteId) {
+  return state.messageLogs.filter(e => e.quote_id === quoteId).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+}
+
+function eventLabel(type) {
+  return {
+    link_created: 'Link creado',
+    viewed: 'Visto por cliente',
+    pdf_downloaded: 'PDF descargado',
+    accepted: 'Aceptada por cliente',
+    rejected: 'Rechazada por cliente',
+    commented: 'Comentario recibido',
+    whatsapp_opened: 'WhatsApp abierto',
+    whatsapp_copied: 'WhatsApp copiado',
+    email_sent: 'Email enviado',
+    manual_followup: 'Seguimiento manual',
+    status_changed: 'Estado cambiado'
+  }[type] || type;
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+  try {
+    return new Intl.DateTimeFormat('es-DO', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
+  } catch (_error) {
+    return String(value || '');
+  }
+}
+
+function applyTemplate(template, quote, publicUrl = '') {
+  const client = getClient(quote.client_id);
+  const totals = quoteTotals(quote);
+  return String(template || '')
+    .replaceAll('{{client_name}}', client?.name || 'cliente')
+    .replaceAll('{{quote_number}}', quote.quote_number || '')
+    .replaceAll('{{quote_total}}', money(totals.total))
+    .replaceAll('{{public_link}}', publicUrl || '')
+    .replaceAll('{{company_name}}', state.company?.name || '');
+}
+
+function getTemplate(channel, name) {
+  return state.messageTemplates.find(t => t.channel === channel && t.name === name && t.status === 'active') || null;
+}
+
 function nextQuoteNumber() {
   const year = new Date().getFullYear();
   const count = state.quotes.length + 1;
@@ -449,9 +555,9 @@ function renderPublic(route) {
 
         <section class="hero">
           <div>
-            <span class="eyebrow">Fase 3 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
+            <span class="eyebrow">Fase 4 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
             <h1>Cotizaciones profesionales con pagos, planes y referidos.</h1>
-            <p>Crea clientes, cotizaciones y PDF. La fase 3 agrega límites por plan, suscripciones, afiliados y webhooks seguros para pagos.</p>
+            <p>Crea clientes, cotizaciones y PDF. La fase 4 agrega links públicos seguros, aceptación/rechazo y seguimiento manual inteligente.</p>
             <div class="hero-actions">
               <button class="btn primary" data-route="auth">Crear cuenta</button>
               <button class="btn secondary" data-action="start-demo">Demo local</button>
@@ -855,7 +961,11 @@ function renderQuoteView(id) {
   if (!quote) return `<div class="empty">Cotización no encontrada.</div>`;
   const client = getClient(quote.client_id);
   const totals = quoteTotals(quote);
-  const message = whatsappMessage(quote);
+  const publicLink = getActivePublicLink(quote.id);
+  const publicUrl = publicLink?.token ? publicUrlFromToken(publicLink.token) : '';
+  const message = whatsappMessage(quote, publicUrl);
+  const events = getQuoteEvents(quote.id);
+  const logs = getQuoteMessageLogs(quote.id);
 
   return `
     <div class="page-header">
@@ -891,6 +1001,8 @@ function renderQuoteView(id) {
         <div>
           <h3>Estado</h3>
           ${statusBadge(quote.status)}
+          ${quote.viewed_at ? `<p class="help">Visto: ${escapeHtml(formatDateTime(quote.viewed_at))}</p>` : ''}
+          ${quote.accepted_at ? `<p class="help">Aceptada: ${escapeHtml(formatDateTime(quote.accepted_at))}</p>` : ''}
         </div>
       </div>
 
@@ -920,11 +1032,74 @@ function renderQuoteView(id) {
     </section>
 
     <section class="card" style="margin-top:18px;">
-      <h2>Mensaje WhatsApp</h2>
-      <p class="help">Copia este texto y envía el PDF generado. El link público seguro entra en fase 3 con API protegida.</p>
-      <textarea class="copy-box" readonly>${escapeHtml(message)}</textarea>
-      <button class="btn secondary" data-action="copy-whatsapp" data-id="${quote.id}">Copiar mensaje</button>
+      <div class="page-header" style="margin-bottom:12px;">
+        <div>
+          <h2>Link público seguro</h2>
+          <p>El cliente puede ver, aceptar o rechazar esta cotización sin iniciar sesión.</p>
+        </div>
+        <button class="btn primary" data-action="create-public-link" data-id="${quote.id}">
+          ${publicLink ? 'Regenerar / obtener link' : 'Crear link público'}
+        </button>
+      </div>
+      ${publicLink ? `
+        <div class="copy-line"><input readonly value="${escapeHtml(publicUrl)}" /><button class="btn secondary" data-action="copy-public-link" data-id="${quote.id}">Copiar</button></div>
+        <div class="header-actions" style="margin-top:12px;">
+          <button class="btn secondary" data-action="open-public-link" data-id="${quote.id}">Abrir vista pública</button>
+          <span class="help">Expira: ${escapeHtml(publicLink.expires_at ? formatDateTime(publicLink.expires_at) : 'sin expiración')}</span>
+        </div>
+      ` : `<div class="empty">Todavía no hay link público activo para esta cotización.</div>`}
     </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>WhatsApp manual inteligente</h2>
+      <p class="help">No usa WhatsApp API. Abre WhatsApp con mensaje prellenado y registra el intento de seguimiento.</p>
+      <textarea class="copy-box" readonly>${escapeHtml(message)}</textarea>
+      <div class="header-actions" style="margin-top:12px;">
+        <button class="btn secondary" data-action="copy-whatsapp" data-id="${quote.id}">Copiar mensaje</button>
+        <button class="btn primary" data-action="open-whatsapp" data-id="${quote.id}" ${client?.phone ? '' : 'disabled'}>Abrir WhatsApp</button>
+        <button class="btn secondary" data-action="manual-followup" data-id="${quote.id}">Registrar seguimiento manual</button>
+      </div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px;">
+      <div class="card">
+        <h2>Actividad</h2>
+        ${events.length ? renderQuoteEvents(events) : `<div class="empty">Sin eventos todavía.</div>`}
+      </div>
+      <div class="card">
+        <h2>Mensajes y seguimientos</h2>
+        ${logs.length ? renderMessageLogs(logs) : `<div class="empty">Sin mensajes registrados todavía.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderQuoteEvents(events) {
+  return `
+    <div class="timeline">
+      ${events.map(event => `
+        <div class="timeline-item">
+          <strong>${escapeHtml(eventLabel(event.event_type))}</strong>
+          <span>${escapeHtml(formatDateTime(event.created_at))}</span>
+          ${event.comment ? `<p>${escapeHtml(event.comment)}</p>` : ''}
+          ${event.actor_name || event.actor_email ? `<p class="help">${escapeHtml([event.actor_name, event.actor_email].filter(Boolean).join(' · '))}</p>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderMessageLogs(logs) {
+  return `
+    <div class="timeline">
+      ${logs.map(log => `
+        <div class="timeline-item">
+          <strong>${escapeHtml(log.channel)} · ${escapeHtml(log.status)}</strong>
+          <span>${escapeHtml(formatDateTime(log.sent_at || log.created_at))}</span>
+          <p>${escapeHtml(log.message_body)}</p>
+        </div>
+      `).join('')}
+    </div>
   `;
 }
 
@@ -933,7 +1108,7 @@ function renderIntegrations() {
     <div class="page-header">
       <div>
         <h1>Integraciones</h1>
-        <p>Estado técnico de Fase 3: pagos, referidos, webhooks y automatizaciones.</p>
+        <p>Estado técnico de Fase 4: pagos, referidos, links públicos, eventos y seguimiento.</p>
       </div>
     </div>
 
@@ -1384,18 +1559,132 @@ function removeItemRow(button) {
   recalcQuoteForm();
 }
 
-function whatsappMessage(quote) {
+function whatsappMessage(quote, publicUrl = '') {
   const client = getClient(quote.client_id);
+  const template = getTemplate('whatsapp', publicUrl ? 'Enviar cotización' : 'Primer seguimiento');
+  if (template?.body) return applyTemplate(template.body, quote, publicUrl);
   const totals = quoteTotals(quote);
-  return `Hola ${client?.name || ''}, te compartimos la cotización ${quote.quote_number} por un total de ${money(totals.total)}. Vigencia: ${quote.valid_until || 'no especificada'}. Quedamos atentos a tu confirmación.`;
+  const linkText = publicUrl ? ` Puedes verla aquí: ${publicUrl}` : '';
+  return `Hola ${client?.name || ''}, te compartimos la cotización ${quote.quote_number} por un total de ${money(totals.total)}. Vigencia: ${quote.valid_until || 'no especificada'}.${linkText} Quedamos atentos a tu confirmación.`;
+}
+
+async function createPublicQuoteLink(id) {
+  if (mode !== 'supabase') {
+    toast('Los links públicos seguros requieren Supabase.');
+    return;
+  }
+  const { data, error } = await supabaseClient.functions.invoke('create-public-quote-link', {
+    body: { quote_id: id, expires_days: 30 }
+  });
+  if (error) throw error;
+  if (!data?.url) throw new Error('No se pudo generar el link público.');
+  await navigator.clipboard.writeText(data.url).catch(() => {});
+  await loadRemoteData();
+  setRoute(`quote-view/${id}`);
+  toast(data.reused ? 'Link público copiado.' : 'Link público creado y copiado.');
+}
+
+async function copyPublicLink(id) {
+  const link = getActivePublicLink(id);
+  if (!link?.token) {
+    toast('Primero crea el link público.');
+    return;
+  }
+  await navigator.clipboard.writeText(publicUrlFromToken(link.token));
+  toast('Link público copiado.');
+}
+
+function openPublicLink(id) {
+  const link = getActivePublicLink(id);
+  if (!link?.token) {
+    toast('Primero crea el link público.');
+    return;
+  }
+  window.open(publicUrlFromToken(link.token), '_blank', 'noopener,noreferrer');
+}
+
+async function logQuoteEvent(quote, eventType, extra = {}) {
+  if (mode !== 'supabase') return;
+  const { error } = await supabaseClient.from('quote_events').insert({
+    company_id: state.company.id,
+    quote_id: quote.id,
+    public_link_id: getActivePublicLink(quote.id)?.id || null,
+    event_type: eventType,
+    comment: extra.comment || null,
+    metadata: extra.metadata || {}
+  });
+  if (error) throw error;
+}
+
+async function logMessage(quote, channel, body, status = 'manual') {
+  if (mode !== 'supabase') return;
+  const { error } = await supabaseClient.from('message_logs').insert({
+    company_id: state.company.id,
+    quote_id: quote.id,
+    client_id: quote.client_id || null,
+    channel,
+    direction: 'outbound',
+    message_body: body,
+    status,
+    sent_at: new Date().toISOString(),
+    metadata: { source: 'cotizaflow-ui' }
+  });
+  if (error) throw error;
 }
 
 async function copyWhatsapp(id) {
   const quote = state.quotes.find(q => q.id === id);
   if (!quote) return;
-  await navigator.clipboard.writeText(whatsappMessage(quote));
+  const link = getActivePublicLink(quote.id);
+  const message = whatsappMessage(quote, link?.token ? publicUrlFromToken(link.token) : '');
+  await navigator.clipboard.writeText(message);
+  if (mode === 'supabase') {
+    await logQuoteEvent(quote, 'whatsapp_copied');
+    await logMessage(quote, 'whatsapp', message, 'manual');
+    await loadRemoteData();
+    setRoute(`quote-view/${id}`);
+  }
   toast('Mensaje copiado.');
 }
+
+async function openWhatsapp(id) {
+  const quote = state.quotes.find(q => q.id === id);
+  if (!quote) return;
+  const client = getClient(quote.client_id);
+  if (!client?.phone) {
+    toast('El cliente no tiene teléfono.');
+    return;
+  }
+  const link = getActivePublicLink(quote.id);
+  const message = whatsappMessage(quote, link?.token ? publicUrlFromToken(link.token) : '');
+  const phone = String(client.phone || '').replace(/[^0-9]/g, '');
+  if (mode === 'supabase') {
+    await logQuoteEvent(quote, 'whatsapp_opened');
+    await logMessage(quote, 'whatsapp', message, 'manual');
+  }
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank', 'noopener,noreferrer');
+  if (mode === 'supabase') {
+    await loadRemoteData();
+    setRoute(`quote-view/${id}`);
+  }
+}
+
+async function manualFollowup(id) {
+  const quote = state.quotes.find(q => q.id === id);
+  if (!quote) return;
+  const link = getActivePublicLink(quote.id);
+  const message = whatsappMessage(quote, link?.token ? publicUrlFromToken(link.token) : '');
+  const comment = prompt('Nota del seguimiento manual:', 'Se dio seguimiento por WhatsApp / llamada.');
+  if (comment === null) return;
+  if (mode === 'supabase') {
+    await logQuoteEvent(quote, 'manual_followup', { comment });
+    await logMessage(quote, 'internal', comment || message, 'manual');
+    await loadRemoteData();
+    setRoute(`quote-view/${id}`);
+  }
+  toast('Seguimiento registrado.');
+}
+
 
 function generatePdf(id) {
   const quote = state.quotes.find(q => q.id === id);
@@ -1561,6 +1850,11 @@ app.addEventListener('click', async (event) => {
     if (action === 'delete-quote') await deleteQuote(id);
     if (action === 'pdf') generatePdf(id);
     if (action === 'copy-whatsapp') await copyWhatsapp(id);
+    if (action === 'open-whatsapp') await openWhatsapp(id);
+    if (action === 'manual-followup') await manualFollowup(id);
+    if (action === 'create-public-link') await createPublicQuoteLink(id);
+    if (action === 'copy-public-link') await copyPublicLink(id);
+    if (action === 'open-public-link') openPublicLink(id);
     if (action === 'checkout') await startCheckout(plan);
     if (action === 'copy-affiliate-link') await copyAffiliateLink();
   } catch (error) {

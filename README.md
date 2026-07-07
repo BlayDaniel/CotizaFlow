@@ -1,4 +1,4 @@
-# CotizaFlow - Fase 3
+# CotizaFlow - Fase 4
 
 MVP web preparado para GitHub Pages + Supabase, con base de pagos, planes y referidos.
 
@@ -191,3 +191,61 @@ https://TU-USUARIO.github.io/cotizaflow/?ref=CODIGO
 - Recordatorios automáticos por email con Resend.
 - Links públicos seguros de cotización mediante Edge Function o Worker.
 - Multiusuario real para Business con invitaciones.
+
+## Fase 4 — Link público seguro y seguimiento
+
+Esta versión agrega la base para seguimiento comercial sin usar WhatsApp API pagada.
+
+Incluye:
+
+- `public.html`: visor público de cotización sin login.
+- `quote_public_links`: tokens públicos por cotización.
+- `quote_events`: historial de actividad: link creado, visto, aceptado, rechazado, PDF descargado, WhatsApp abierto/copiadado y seguimiento manual.
+- `message_templates`: plantillas de WhatsApp/email.
+- `message_logs`: registro de mensajes/manual followups.
+- Edge Functions:
+  - `create-public-quote-link`
+  - `get-public-quote`
+  - `quote-public-action`
+
+### Instalación Fase 4
+
+1. Ejecutar en Supabase SQL Editor:
+
+```txt
+supabase/schema_phase4.sql
+```
+
+2. Desplegar funciones:
+
+```cmd
+supabase functions deploy create-public-quote-link
+supabase functions deploy get-public-quote
+supabase functions deploy quote-public-action
+```
+
+3. Confirmar que `PUBLIC_APP_URL` apunta a la URL final:
+
+```cmd
+supabase secrets set PUBLIC_APP_URL="https://blaydaniel.github.io/CotizaFlow/"
+```
+
+4. Redesplegar si cambiaste `PUBLIC_APP_URL`:
+
+```cmd
+supabase functions deploy create-public-quote-link
+```
+
+### Prueba básica
+
+1. Abrir una cotización dentro de CotizaFlow.
+2. Presionar `Crear link público`.
+3. Abrir el link generado.
+4. Confirmar que carga `public.html`.
+5. Presionar `Aceptar cotización` o `Rechazar cotización`.
+6. Volver a la cotización privada y confirmar que aparece en `Actividad`.
+7. Presionar `Abrir WhatsApp` para validar mensaje prellenado y registro manual.
+
+### Nota técnica
+
+No se abre `quotes` directamente al público. La vista pública pasa por Edge Functions con token aleatorio y service role interno. El frontend público solo recibe los datos mínimos de la cotización.
