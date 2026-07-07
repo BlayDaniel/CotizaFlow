@@ -214,3 +214,20 @@ button:disabled, input:disabled { opacity: .6; cursor: not-allowed; }
     border: 0 !important;
   }
 }
+
+/* Fase 5: catálogo y plantillas */
+.catalog-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+@media (max-width: 900px) {
+  .catalog-picker { grid-template-columns: 1fr; }
+}

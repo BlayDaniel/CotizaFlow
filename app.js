@@ -4,10 +4,10 @@ const app = document.getElementById('app');
 const REFERRAL_STORAGE_KEY = 'cotizaflow_pending_referral_code_v1';
 
 const PLAN_CATALOG = {
-  free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, description: 'Prueba limitada para validar el producto.' },
-  starter: { name: 'Starter', price: 9, quoteLimit: 30, users: 1, description: 'Para negocios pequeños que cotizan pocas veces al mes.' },
-  pro: { name: 'Pro', price: 19, quoteLimit: 150, users: 1, description: 'Recordatorios automáticos, logo y plantillas.' },
-  business: { name: 'Business', price: 39, quoteLimit: 500, users: 3, description: 'Mayor volumen, tres usuarios y reportes.' }
+  free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, catalogLimit: 10, description: 'Prueba limitada para validar el producto.' },
+  starter: { name: 'Starter', price: 9, quoteLimit: 50, users: 1, catalogLimit: 50, description: 'Para negocios pequeños que cotizan con frecuencia moderada.' },
+  enterprise: { name: 'Enterprise', price: 39, quoteLimit: 500, users: 3, catalogLimit: 500, description: 'Mayor volumen, equipo pequeño, plantillas y reportes.' },
+  custom: { name: 'A cotizar', price: null, quoteLimit: 500, users: 10, catalogLimit: 1000, description: 'Para empresas con alto volumen, múltiples usuarios o necesidades especiales.' }
 };
 
 const ACTIVE_BILLING_STATUSES = new Set(['active', 'trialing', 'on_trial', 'paid']);
@@ -28,6 +28,8 @@ let state = {
   quoteEvents: [],
   messageLogs: [],
   messageTemplates: [],
+  productsServices: [],
+  businessTemplates: [],
   pendingReferralCode: captureReferralCode(),
   authMessage: '',
   activeAuthTab: 'login'
@@ -43,7 +45,11 @@ const defaultCompany = {
   tax_rate: 0,
   logo_data_url: '',
   plan: 'free',
-  subscription_status: 'trialing'
+  subscription_status: 'trialing',
+  business_type: 'general',
+  default_quote_notes: 'Gracias por considerar nuestra propuesta. Esta cotización está sujeta a disponibilidad y vigencia indicada.',
+  default_terms: '',
+  default_whatsapp_template: ''
 };
 
 const localDefaultState = {
@@ -58,7 +64,9 @@ const localDefaultState = {
   publicLinks: [],
   quoteEvents: [],
   messageLogs: [],
-  messageTemplates: []
+  messageTemplates: [],
+  productsServices: [],
+  businessTemplates: []
 };
 
 function sanitizeReferralCode(value) {
@@ -155,7 +163,9 @@ function loadLocalState() {
       publicLinks: parsed.publicLinks || [],
       quoteEvents: parsed.quoteEvents || [],
       messageLogs: parsed.messageLogs || [],
-      messageTemplates: parsed.messageTemplates || []
+      messageTemplates: parsed.messageTemplates || [],
+      productsServices: parsed.productsServices || [],
+      businessTemplates: parsed.businessTemplates || []
     };
   } catch (error) {
     console.error(error);
@@ -177,7 +187,9 @@ function saveLocalState() {
     publicLinks: state.publicLinks,
     quoteEvents: state.quoteEvents,
     messageLogs: state.messageLogs,
-    messageTemplates: state.messageTemplates
+    messageTemplates: state.messageTemplates,
+    productsServices: state.productsServices,
+    businessTemplates: state.businessTemplates
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -213,7 +225,9 @@ async function loadRemoteData() {
       { data: publicLinks, error: publicLinksError },
       { data: quoteEvents, error: quoteEventsError },
       { data: messageLogs, error: messageLogsError },
-      { data: messageTemplates, error: messageTemplatesError }
+      { data: messageTemplates, error: messageTemplatesError },
+      { data: productsServices, error: productsServicesError },
+      { data: businessTemplates, error: businessTemplatesError }
     ] = await Promise.all([
       supabaseClient.from('clients').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }),
       supabaseClient.from('quotes').select('*, quote_items(*)').eq('company_id', state.company.id).order('created_at', { ascending: false }),
@@ -222,7 +236,9 @@ async function loadRemoteData() {
       supabaseClient.from('quote_public_links').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }),
       supabaseClient.from('quote_events').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }).limit(200),
       supabaseClient.from('message_logs').select('*').eq('company_id', state.company.id).order('created_at', { ascending: false }).limit(200),
-      supabaseClient.from('message_templates').select('*').eq('company_id', state.company.id).order('channel', { ascending: true }).order('name', { ascending: true })
+      supabaseClient.from('message_templates').select('*').eq('company_id', state.company.id).order('channel', { ascending: true }).order('name', { ascending: true }),
+      supabaseClient.from('products_services').select('*').eq('company_id', state.company.id).order('is_active', { ascending: false }).order('category', { ascending: true }).order('name', { ascending: true }),
+      supabaseClient.from('business_type_templates').select('*').eq('is_active', true).order('business_type', { ascending: true }).order('category', { ascending: true }).order('name', { ascending: true })
     ]);
 
     if (clientsError) throw clientsError;
@@ -233,6 +249,8 @@ async function loadRemoteData() {
     if (quoteEventsError) throw quoteEventsError;
     if (messageLogsError) throw messageLogsError;
     if (messageTemplatesError) throw messageTemplatesError;
+    if (productsServicesError) throw productsServicesError;
+    if (businessTemplatesError) throw businessTemplatesError;
 
     state.billing = billingRows?.[0] || null;
     state.affiliate = affiliate || null;
@@ -240,6 +258,8 @@ async function loadRemoteData() {
     state.quoteEvents = quoteEvents || [];
     state.messageLogs = messageLogs || [];
     state.messageTemplates = messageTemplates || [];
+    state.productsServices = productsServices || [];
+    state.businessTemplates = businessTemplates || [];
 
     if (state.affiliate?.id) {
       const [{ data: referrals }, { data: commissions }] = await Promise.all([
@@ -294,7 +314,9 @@ async function getOrCreateRemoteCompany() {
       currency: 'USD',
       tax_rate: 0,
       plan: 'free',
-      subscription_status: 'trialing'
+      subscription_status: 'trialing',
+      business_type: 'general',
+      default_quote_notes: defaultCompany.default_quote_notes
     })
     .select('*')
     .single();
@@ -340,9 +362,18 @@ function hasUsableSubscription() {
   return false;
 }
 
+function normalizePlanKey(planValue) {
+  const plan = String(planValue || 'free').toLowerCase();
+  if (plan === 'business') return 'enterprise';
+  if (plan === 'pro') return 'starter';
+  if (PLAN_CATALOG[plan]) return plan;
+  return 'free';
+}
+
 function getEffectivePlanKey() {
-  const plan = String(state.billing?.plan || state.company?.plan || 'free').toLowerCase();
+  const plan = normalizePlanKey(state.billing?.plan || state.company?.plan || 'free');
   if (plan === 'free') return 'free';
+  if (plan === 'custom') return hasUsableSubscription() ? 'custom' : 'free';
   return hasUsableSubscription() ? (PLAN_CATALOG[plan] ? plan : 'free') : 'free';
 }
 
@@ -555,9 +586,9 @@ function renderPublic(route) {
 
         <section class="hero">
           <div>
-            <span class="eyebrow">Fase 4 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
+            <span class="eyebrow">Fase 5 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
             <h1>Cotizaciones profesionales con pagos, planes y referidos.</h1>
-            <p>Crea clientes, cotizaciones y PDF. La fase 4 agrega links públicos seguros, aceptación/rechazo y seguimiento manual inteligente.</p>
+            <p>Crea clientes, cotizaciones y PDF. La fase 5 agrega catálogo de servicios, plantillas comerciales y planes simplificados.</p>
             <div class="hero-actions">
               <button class="btn primary" data-route="auth">Crear cuenta</button>
               <button class="btn secondary" data-action="start-demo">Demo local</button>
@@ -565,7 +596,7 @@ function renderPublic(route) {
             <div class="bullets">
               <span>Auth por correo y contraseña cuando Supabase está configurado.</span>
               <span>Base de datos PostgreSQL con RLS para aislar empresas.</span>
-              <span>Planes Starter, Pro y Business con bloqueo mensual.</span>
+              <span>Planes Starter, Enterprise y A cotizar con bloqueo mensual.</span>
               <span>Referidos con comisión recurrente por 12 meses.</span>
             </div>
           </div>
@@ -641,6 +672,8 @@ function renderApp(route) {
           ${navLink('quotes', 'Cotizaciones')}
           ${navLink('quote-new', 'Nueva cotización')}
           ${navLink('clients', 'Clientes')}
+          ${navLink('catalog', 'Catálogo')}
+          ${navLink('templates', 'Plantillas')}
           ${navLink('settings', 'Empresa')}
           ${navLink('billing', 'Planes y pagos')}
           ${navLink('affiliates', 'Referidos')}
@@ -670,6 +703,8 @@ function renderRoute(route) {
     case 'quotes': return renderQuotes();
     case 'quote-new': return renderQuoteForm();
     case 'clients': return renderClients();
+    case 'catalog': return renderCatalog();
+    case 'templates': return renderTemplates();
     case 'settings': return renderSettings();
     case 'billing': return renderBilling();
     case 'affiliates': return renderAffiliates();
@@ -839,6 +874,191 @@ function renderClients() {
   `;
 }
 
+
+const BUSINESS_TYPES = [
+  ['general', 'General / servicios'],
+  ['taller', 'Taller'],
+  ['camaras', 'Instalación de cámaras'],
+  ['electricos', 'Técnicos eléctricos'],
+  ['aires', 'Aires acondicionados'],
+  ['imprenta', 'Imprenta'],
+  ['carga', 'Agencia de carga'],
+  ['suplidor', 'Suplidor']
+];
+
+function businessTypeLabel(value) {
+  return (BUSINESS_TYPES.find(([key]) => key === value)?.[1]) || 'General / servicios';
+}
+
+function businessTypeOptions(selected = 'general') {
+  return BUSINESS_TYPES.map(([key, label]) => `<option value="${key}" ${String(selected || 'general') === key ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+}
+
+function activeProductsServices() {
+  return (state.productsServices || []).filter(p => p.is_active !== false);
+}
+
+function renderCatalogPicker() {
+  const products = activeProductsServices();
+  if (!products.length) {
+    return `
+      <div class="notice warning">
+        Todavía no tienes catálogo. Puedes crear items manuales o ir a <strong>Catálogo</strong> para cargar servicios frecuentes.
+      </div>
+    `;
+  }
+
+  return `
+    <div class="catalog-picker">
+      <div class="field">
+        <label>Agregar desde catálogo</label>
+        <select data-catalog-select>
+          <option value="">Selecciona producto o servicio...</option>
+          ${products.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml([item.category, item.name].filter(Boolean).join(' · '))} — ${money(item.unit_price)}</option>`).join('')}
+        </select>
+      </div>
+      <button class="btn secondary" type="button" data-action="add-catalog-item">Agregar</button>
+    </div>
+  `;
+}
+
+function renderCatalog() {
+  const usage = getPlanUsage();
+  const products = activeProductsServices();
+  const catalogLimit = Number(usage.plan.catalogLimit || 0);
+  const reached = products.length >= catalogLimit;
+  const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
+
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Catálogo</h1>
+        <p>Servicios y productos frecuentes para crear cotizaciones más rápido.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-action="seed-catalog">Cargar plantilla ${escapeHtml(businessTypeLabel(state.company?.business_type))}</button>
+        <button class="btn secondary" data-route="quote-new">Nueva cotización</button>
+      </div>
+    </div>
+
+    <section class="grid cols-3">
+      <div class="card metric"><span>Items activos</span><strong>${products.length}</strong></div>
+      <div class="card metric"><span>Límite del plan</span><strong>${catalogLimit}</strong></div>
+      <div class="card metric"><span>Categorías</span><strong>${categories.length}</strong></div>
+    </section>
+
+    ${reached ? `<div class="notice warning" style="margin-top:18px;">Llegaste al límite de catálogo del plan ${escapeHtml(usage.plan.name)}: ${products.length}/${catalogLimit}. Sube de plan para agregar más.</div>` : ''}
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Agregar producto / servicio</h2>
+      <form data-form="product-service" class="form-grid three">
+        <div class="field"><label>Nombre</label><input name="name" required placeholder="Instalación cámara IP" ${reached ? 'disabled' : ''} /></div>
+        <div class="field"><label>Categoría</label><input name="category" placeholder="CCTV, Taller, Aire..." ${reached ? 'disabled' : ''} /></div>
+        <div class="field"><label>Unidad</label>
+          <select name="unit" ${reached ? 'disabled' : ''}>
+            ${['servicio','unidad','hora','día','paquete','m2','m3','kg'].map(u => `<option value="${u}">${u}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Cantidad por defecto</label><input name="default_quantity" type="number" step="0.01" min="0" value="1" ${reached ? 'disabled' : ''} /></div>
+        <div class="field"><label>Precio venta</label><input name="unit_price" type="number" step="0.01" min="0" value="0" ${reached ? 'disabled' : ''} /></div>
+        <div class="field"><label>Costo interno opcional</label><input name="cost" type="number" step="0.01" min="0" value="0" ${reached ? 'disabled' : ''} /></div>
+        <div class="field"><label>Impuesto % opcional</label><input name="tax_rate" type="number" step="0.01" min="0" value="${escapeHtml(state.company?.tax_rate || 0)}" ${reached ? 'disabled' : ''} /></div>
+        <div class="field" style="grid-column:1/-1;"><label>Descripción para cotización</label><textarea name="description" placeholder="Descripción que se insertará en la cotización" ${reached ? 'disabled' : ''}></textarea></div>
+        <button class="btn primary" type="submit" ${reached ? 'disabled' : ''}>Guardar en catálogo</button>
+      </form>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Productos y servicios</h2>
+      ${products.length ? renderProductsServicesTable(products) : `<div class="empty">Todavía no tienes productos o servicios guardados.</div>`}
+    </section>
+  `;
+}
+
+function renderProductsServicesTable(products) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Nombre</th><th>Categoría</th><th>Unidad</th><th>Precio</th><th>Costo</th><th>Margen</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${products.map(item => {
+            const price = Number(item.unit_price || 0);
+            const cost = Number(item.cost || 0);
+            const margin = price > 0 ? Math.round(((price - cost) / price) * 100) : 0;
+            return `
+              <tr>
+                <td><strong>${escapeHtml(item.name)}</strong><br><span class="help">${escapeHtml(item.description || '')}</span></td>
+                <td>${escapeHtml(item.category || '')}</td>
+                <td>${escapeHtml(item.unit || 'servicio')}</td>
+                <td>${money(price)}</td>
+                <td>${cost ? money(cost) : '-'}</td>
+                <td>${cost ? `${margin}%` : '-'}</td>
+                <td><button class="btn danger small" data-action="delete-product-service" data-id="${item.id}">Desactivar</button></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderTemplates() {
+  const templates = state.messageTemplates || [];
+  const whatsapp = templates.filter(t => t.channel === 'whatsapp' && t.status === 'active');
+  const email = templates.filter(t => t.channel === 'email' && t.status === 'active');
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Plantillas</h1>
+        <p>Mensajes reutilizables para WhatsApp manual, seguimiento y preparación futura de email.</p>
+      </div>
+    </div>
+
+    <section class="grid cols-2">
+      <div class="card metric"><span>WhatsApp</span><strong>${whatsapp.length}</strong></div>
+      <div class="card metric"><span>Email preparado</span><strong>${email.length}</strong></div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Nueva plantilla</h2>
+      <form data-form="message-template" class="form-grid two">
+        <div class="field"><label>Canal</label><select name="channel"><option value="whatsapp">WhatsApp manual</option><option value="email">Email futuro</option></select></div>
+        <div class="field"><label>Nombre</label><input name="name" required placeholder="Segundo seguimiento" /></div>
+        <div class="field" style="grid-column:1/-1;"><label>Asunto email opcional</label><input name="subject" placeholder="Cotización {{quote_number}}" /></div>
+        <div class="field" style="grid-column:1/-1;"><label>Cuerpo</label><textarea name="body" required placeholder="Hola {{client_name}}, te comparto la cotización {{quote_number}} por {{quote_total}}. {{public_link}}"></textarea></div>
+        <p class="help" style="grid-column:1/-1;">Variables disponibles: <code>{{client_name}}</code>, <code>{{quote_number}}</code>, <code>{{quote_total}}</code>, <code>{{public_link}}</code>, <code>{{company_name}}</code>.</p>
+        <button class="btn primary" type="submit">Guardar plantilla</button>
+      </form>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Plantillas activas</h2>
+      ${templates.filter(t => t.status === 'active').length ? renderMessageTemplatesTable(templates.filter(t => t.status === 'active')) : `<div class="empty">No hay plantillas activas.</div>`}
+    </section>
+  `;
+}
+
+function renderMessageTemplatesTable(templates) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Canal</th><th>Nombre</th><th>Mensaje</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${templates.map(t => `
+            <tr>
+              <td>${escapeHtml(t.channel)}</td>
+              <td><strong>${escapeHtml(t.name)}</strong>${t.subject ? `<br><span class="help">${escapeHtml(t.subject)}</span>` : ''}</td>
+              <td>${escapeHtml(t.body || '').slice(0, 220)}${String(t.body || '').length > 220 ? '...' : ''}</td>
+              <td><button class="btn danger small" data-action="delete-message-template" data-id="${t.id}">Desactivar</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderSettings() {
   const c = state.company || defaultCompany;
   return `
@@ -861,7 +1081,15 @@ function renderSettings() {
           </select>
         </div>
         <div class="field"><label>Impuesto %</label><input name="tax_rate" type="number" step="0.01" min="0" value="${escapeHtml(c.tax_rate)}" /></div>
+        <div class="field"><label>Tipo de negocio</label>
+          <select name="business_type">
+            ${businessTypeOptions(c.business_type)}
+          </select>
+        </div>
         <div class="field" style="grid-column:1/-1;"><label>Dirección</label><textarea name="address">${escapeHtml(c.address)}</textarea></div>
+        <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en cotizaciones</label><textarea name="default_quote_notes">${escapeHtml(c.default_quote_notes || defaultCompany.default_quote_notes)}</textarea></div>
+        <div class="field" style="grid-column:1/-1;"><label>Términos y condiciones por defecto</label><textarea name="default_terms" placeholder="Opcional">${escapeHtml(c.default_terms || '')}</textarea></div>
+        <div class="field" style="grid-column:1/-1;"><label>Mensaje WhatsApp por defecto</label><textarea name="default_whatsapp_template" placeholder="Usa variables: {{client_name}}, {{quote_number}}, {{quote_total}}, {{public_link}}, {{company_name}}">${escapeHtml(c.default_whatsapp_template || '')}</textarea></div>
         <button class="btn primary" type="submit">Guardar empresa</button>
       </form>
     </section>
@@ -879,7 +1107,7 @@ function renderQuoteForm(id) {
     currency: state.company?.currency || 'USD',
     tax_rate: state.company?.tax_rate || 0,
     valid_until: addDaysISO(15),
-    notes: 'Gracias por considerar nuestra propuesta. Esta cotización está sujeta a disponibilidad y vigencia indicada.',
+    notes: state.company?.default_quote_notes || defaultCompany.default_quote_notes,
     items: [{ id: uid('item'), description: '', quantity: 1, unit_price: 0, total: 0 }]
   };
   const limitReached = !editing && !canCreateQuote();
@@ -922,6 +1150,7 @@ function renderQuoteForm(id) {
           <h2>Items</h2>
           <button class="btn secondary small" type="button" data-action="add-item">Agregar item</button>
         </div>
+        ${renderCatalogPicker()}
         <div id="items">
           ${(current.items || []).map(item => renderItemRow(item)).join('')}
         </div>
@@ -1108,7 +1337,7 @@ function renderIntegrations() {
     <div class="page-header">
       <div>
         <h1>Integraciones</h1>
-        <p>Estado técnico de Fase 4: pagos, referidos, links públicos, eventos y seguimiento.</p>
+        <p>Estado técnico de Fase 5: pagos, referidos, links públicos, catálogo y plantillas.</p>
       </div>
     </div>
 
@@ -1116,7 +1345,7 @@ function renderIntegrations() {
       <div class="card">
         <h2>Base de datos</h2>
         <p><strong>Estado:</strong> ${mode === 'supabase' ? 'Supabase conectado' : 'modo local'}</p>
-        <p class="help">Ejecuta <code>supabase/schema_phase3.sql</code> después del schema base para activar límites, RPC de referidos y seguridad de campos de plan.</p>
+        <p class="help">Ejecuta <code>supabase/schema_phase5.sql</code> después de Fase 4 para activar planes nuevos, catálogo y plantillas por tipo de negocio.</p>
       </div>
       <div class="card">
         <h2>Backend seguro</h2>
@@ -1124,7 +1353,7 @@ function renderIntegrations() {
           <span><code>create-checkout</code> crea checkout con metadata segura.</span>
           <span><code>billing-webhook</code> procesa pagos y actualiza planes.</span>
           <span>Las secret keys quedan solo en Supabase Edge Functions.</span>
-          <span>Resend queda preparado para una fase posterior de emails.</span>
+          <span>Resend queda pendiente para una fase posterior con dominio propio.</span>
         </div>
       </div>
     </section>
@@ -1145,7 +1374,7 @@ function renderBilling() {
     ${renderUsageCard()}
 
     <section class="grid cols-3" style="margin-top:18px;">
-      ${['starter','pro','business'].map(planKey => renderPlanCard(planKey, usage.planKey, provider)).join('')}
+      ${['starter','enterprise','custom'].map(planKey => renderPlanCard(planKey, usage.planKey, provider)).join('')}
     </section>
 
     <section class="card" style="margin-top:18px;">
@@ -1165,15 +1394,15 @@ function renderPlanCard(planKey, currentPlanKey, provider) {
     <div class="card plan-card ${isCurrent ? 'current' : ''}">
       <div class="plan-topline">${isCurrent ? 'Plan actual' : provider}</div>
       <h2>${escapeHtml(plan.name)}</h2>
-      <div class="plan-price">US$${plan.price}<span>/mes</span></div>
+      <div class="plan-price">${plan.price === null ? 'A cotizar' : `US$${plan.price}`}<span>${plan.price === null ? '' : '/mes'}</span></div>
       <p>${escapeHtml(plan.description)}</p>
       <div class="bullets">
         <span>${plan.quoteLimit} cotizaciones al mes.</span>
         <span>${plan.users} usuario${plan.users > 1 ? 's' : ''} incluido${plan.users > 1 ? 's' : ''}.</span>
-        <span>${planKey === 'starter' ? 'PDF y WhatsApp.' : planKey === 'pro' ? 'Recordatorios, logo y plantillas.' : 'Reportes y uso por equipo.'}</span>
+        <span>${planKey === 'starter' ? 'PDF, links públicos y WhatsApp manual.' : planKey === 'enterprise' ? 'Plantillas, catálogo amplio y reportes.' : 'Volumen, usuarios e integraciones a medida.'}</span>
       </div>
       <button class="btn ${isCurrent ? 'secondary' : 'primary'} full" data-action="checkout" data-plan="${planKey}" ${isCurrent ? 'disabled' : ''}>
-        ${isCurrent ? 'Activo' : 'Elegir plan'}
+        ${isCurrent ? 'Activo' : plan.price === null ? 'Solicitar cotización' : 'Elegir plan'}
       </button>
     </div>
   `;
@@ -1338,7 +1567,11 @@ async function saveCompany(form) {
     phone: String(fd.get('phone') || '').trim(),
     address: String(fd.get('address') || '').trim(),
     currency: String(fd.get('currency') || 'USD').trim().toUpperCase(),
-    tax_rate: Number(fd.get('tax_rate') || 0)
+    tax_rate: Number(fd.get('tax_rate') || 0),
+    business_type: String(fd.get('business_type') || 'general').trim(),
+    default_quote_notes: String(fd.get('default_quote_notes') || '').trim(),
+    default_terms: String(fd.get('default_terms') || '').trim(),
+    default_whatsapp_template: String(fd.get('default_whatsapp_template') || '').trim()
   };
 
   if (mode === 'supabase') {
@@ -1561,6 +1794,7 @@ function removeItemRow(button) {
 
 function whatsappMessage(quote, publicUrl = '') {
   const client = getClient(quote.client_id);
+  if (state.company?.default_whatsapp_template) return applyTemplate(state.company.default_whatsapp_template, quote, publicUrl);
   const template = getTemplate('whatsapp', publicUrl ? 'Enviar cotización' : 'Primer seguimiento');
   if (template?.body) return applyTemplate(template.body, quote, publicUrl);
   const totals = quoteTotals(quote);
@@ -1686,6 +1920,168 @@ async function manualFollowup(id) {
 }
 
 
+
+function addCatalogItemToQuote() {
+  const select = document.querySelector('[data-catalog-select]');
+  const productId = select?.value;
+  if (!productId) {
+    toast('Selecciona un producto o servicio del catálogo.');
+    return;
+  }
+  const product = activeProductsServices().find(p => p.id === productId);
+  if (!product) {
+    toast('Producto no encontrado.');
+    return;
+  }
+  const description = product.description || product.name;
+  const quantity = Number(product.default_quantity || 1);
+  const unit_price = Number(product.unit_price || 0);
+  const total = quantity * unit_price;
+  const container = document.getElementById('items');
+  if (!container) return;
+  container.insertAdjacentHTML('beforeend', renderItemRow({ description, quantity, unit_price, total }));
+  recalcQuoteForm();
+  select.value = '';
+  toast('Item agregado desde catálogo.');
+}
+
+async function saveProductService(form) {
+  const usage = getPlanUsage();
+  const limit = Number(usage.plan.catalogLimit || 0);
+  if (activeProductsServices().length >= limit) {
+    toast(`Llegaste al límite de catálogo del plan ${usage.plan.name}.`);
+    return;
+  }
+  const fd = new FormData(form);
+  const payload = {
+    company_id: state.company.id,
+    name: String(fd.get('name') || '').trim(),
+    description: String(fd.get('description') || '').trim(),
+    category: String(fd.get('category') || '').trim(),
+    unit: String(fd.get('unit') || 'servicio').trim(),
+    default_quantity: Number(fd.get('default_quantity') || 1),
+    unit_price: Number(fd.get('unit_price') || 0),
+    cost: Number(fd.get('cost') || 0),
+    tax_rate: Number(fd.get('tax_rate') || 0),
+    is_active: true
+  };
+  if (!payload.name) {
+    toast('El nombre es obligatorio.');
+    return;
+  }
+
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient.from('products_services').insert(payload);
+    if (error) throw error;
+    await loadRemoteData();
+  } else {
+    state.productsServices.unshift({ ...payload, id: uid('prod'), created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    saveLocalState();
+    render();
+  }
+  form.reset();
+  toast('Producto/servicio guardado.');
+  setRoute('catalog');
+}
+
+async function deleteProductService(id) {
+  if (!confirm('¿Desactivar este producto o servicio del catálogo?')) return;
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient.from('products_services').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+    await loadRemoteData();
+  } else {
+    state.productsServices = state.productsServices.map(p => p.id === id ? { ...p, is_active: false } : p);
+    saveLocalState();
+    render();
+  }
+  setRoute('catalog');
+  toast('Item desactivado.');
+}
+
+async function seedCatalogForBusinessType() {
+  const businessType = state.company?.business_type || 'general';
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient.rpc('seed_catalog_for_business_type', {
+      target_company_id: state.company.id,
+      selected_business_type: businessType
+    });
+    if (error) throw error;
+    await loadRemoteData();
+  } else {
+    const seeds = (state.businessTemplates || []).filter(t => t.business_type === businessType || t.business_type === 'general');
+    seeds.forEach(t => {
+      if (!state.productsServices.some(p => p.name === t.name)) {
+        state.productsServices.unshift({
+          id: uid('prod'),
+          company_id: state.company.id || 'local-company',
+          name: t.name,
+          description: t.description || '',
+          category: t.category || '',
+          unit: t.unit || 'servicio',
+          default_quantity: 1,
+          unit_price: Number(t.unit_price || 0),
+          cost: 0,
+          tax_rate: Number(state.company?.tax_rate || 0),
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+      }
+    });
+    saveLocalState();
+    render();
+  }
+  setRoute('catalog');
+  toast('Catálogo base cargado.');
+}
+
+async function saveMessageTemplate(form) {
+  const fd = new FormData(form);
+  const payload = {
+    company_id: state.company.id,
+    channel: String(fd.get('channel') || 'whatsapp'),
+    name: String(fd.get('name') || '').trim(),
+    subject: String(fd.get('subject') || '').trim() || null,
+    body: String(fd.get('body') || '').trim(),
+    status: 'active'
+  };
+  if (!payload.name || !payload.body) {
+    toast('Nombre y cuerpo son obligatorios.');
+    return;
+  }
+
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient.from('message_templates').upsert(payload, { onConflict: 'company_id,channel,name' });
+    if (error) throw error;
+    await loadRemoteData();
+  } else {
+    const existing = state.messageTemplates.find(t => t.channel === payload.channel && t.name === payload.name);
+    if (existing) Object.assign(existing, payload, { updated_at: new Date().toISOString() });
+    else state.messageTemplates.unshift({ ...payload, id: uid('tmpl'), created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    saveLocalState();
+    render();
+  }
+  form.reset();
+  setRoute('templates');
+  toast('Plantilla guardada.');
+}
+
+async function deleteMessageTemplate(id) {
+  if (!confirm('¿Desactivar esta plantilla?')) return;
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient.from('message_templates').update({ status: 'inactive', updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+    await loadRemoteData();
+  } else {
+    state.messageTemplates = state.messageTemplates.map(t => t.id === id ? { ...t, status: 'inactive' } : t);
+    saveLocalState();
+    render();
+  }
+  setRoute('templates');
+  toast('Plantilla desactivada.');
+}
+
 function generatePdf(id) {
   const quote = state.quotes.find(q => q.id === id);
   if (!quote) return;
@@ -1781,11 +2177,17 @@ function generatePdf(id) {
 
 
 async function startCheckout(planKey) {
+  if (planKey === 'custom') {
+    const subject = encodeURIComponent('CotizaFlow - plan a cotizar');
+    const body = encodeURIComponent(`Hola, deseo cotizar un plan para ${state.company?.name || 'mi empresa'}. Necesito más de 500 cotizaciones o condiciones especiales.`);
+    window.location.href = `mailto:${config.salesEmail || 'ventas@cotizaflow.app'}?subject=${subject}&body=${body}`;
+    return;
+  }
   if (mode !== 'supabase') {
     toast('Publica y entra con Supabase antes de cobrar planes reales.');
     return;
   }
-  if (!PLAN_CATALOG[planKey] || planKey === 'free') {
+  if (!PLAN_CATALOG[planKey] || ['free', 'custom'].includes(planKey)) {
     toast('Plan inválido.');
     return;
   }
@@ -1857,6 +2259,10 @@ app.addEventListener('click', async (event) => {
     if (action === 'open-public-link') openPublicLink(id);
     if (action === 'checkout') await startCheckout(plan);
     if (action === 'copy-affiliate-link') await copyAffiliateLink();
+    if (action === 'add-catalog-item') addCatalogItemToQuote();
+    if (action === 'delete-product-service') await deleteProductService(id);
+    if (action === 'seed-catalog') await seedCatalogForBusinessType();
+    if (action === 'delete-message-template') await deleteMessageTemplate(id);
   } catch (error) {
     console.error(error);
     toast(error.message || 'Ocurrió un error.');
@@ -1873,6 +2279,8 @@ app.addEventListener('submit', async (event) => {
     if (type === 'client') await saveClient(form);
     if (type === 'quote') await saveQuote(form);
     if (type === 'affiliate') await saveAffiliate(form);
+    if (type === 'product-service') await saveProductService(form);
+    if (type === 'message-template') await saveMessageTemplate(form);
   } catch (error) {
     console.error(error);
     toast(error.message || 'No se pudo guardar.');

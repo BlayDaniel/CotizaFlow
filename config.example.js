@@ -5,5 +5,6 @@ window.COTIZAFLOW_CONFIG = {
   supabaseUrl: 'https://TU-PROYECTO.supabase.co',
   supabaseAnonKey: 'TU_SUPABASE_PUBLISHABLE_KEY',
   appName: 'CotizaFlow',
-  billingProvider: 'lemon_squeezy'
+  billingProvider: 'lemon_squeezy',
+  salesEmail: 'ventas@cotizaflow.app'
 };
