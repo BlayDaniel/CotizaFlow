@@ -31,6 +31,7 @@ let state = {
   productsServices: [],
   businessTemplates: [],
   pendingReferralCode: captureReferralCode(),
+  reportFilters: { period: 'all', status: 'all', attention: 'all' },
   authMessage: '',
   activeAuthTab: 'login'
 };
@@ -66,7 +67,8 @@ const localDefaultState = {
   messageLogs: [],
   messageTemplates: [],
   productsServices: [],
-  businessTemplates: []
+  businessTemplates: [],
+  reportFilters: { period: 'all', status: 'all', attention: 'all' }
 };
 
 function sanitizeReferralCode(value) {
@@ -165,7 +167,8 @@ function loadLocalState() {
       messageLogs: parsed.messageLogs || [],
       messageTemplates: parsed.messageTemplates || [],
       productsServices: parsed.productsServices || [],
-      businessTemplates: parsed.businessTemplates || []
+      businessTemplates: parsed.businessTemplates || [],
+      reportFilters: parsed.reportFilters || { period: 'all', status: 'all', attention: 'all' }
     };
   } catch (error) {
     console.error(error);
@@ -189,7 +192,8 @@ function saveLocalState() {
     messageLogs: state.messageLogs,
     messageTemplates: state.messageTemplates,
     productsServices: state.productsServices,
-    businessTemplates: state.businessTemplates
+    businessTemplates: state.businessTemplates,
+    reportFilters: state.reportFilters
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -532,6 +536,29 @@ function formatDateTime(value) {
   }
 }
 
+function formatDate(value) {
+  if (!value) return '';
+  try {
+    return new Intl.DateTimeFormat('es-DO', { dateStyle: 'medium' }).format(new Date(value));
+  } catch (_error) {
+    return String(value || '');
+  }
+}
+
+function safeDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function daysBetween(dateA, dateB = new Date()) {
+  const a = safeDate(dateA);
+  const b = safeDate(dateB);
+  if (!a || !b) return null;
+  const ms = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime() - new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
+  return Math.round(ms / 86400000);
+}
+
 function applyTemplate(template, quote, publicUrl = '') {
   const client = getClient(quote.client_id);
   const totals = quoteTotals(quote);
@@ -586,9 +613,9 @@ function renderPublic(route) {
 
         <section class="hero">
           <div>
-            <span class="eyebrow">Fase 5 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
-            <h1>Cotizaciones profesionales con pagos, planes y referidos.</h1>
-            <p>Crea clientes, cotizaciones y PDF. La fase 5 agrega catálogo de servicios, plantillas comerciales y planes simplificados.</p>
+            <span class="eyebrow">Fase 6 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
+            <h1>Cotizaciones profesionales con seguimiento comercial.</h1>
+            <p>Crea clientes, cotizaciones y PDF. La fase 6 agrega dashboard comercial, alertas de seguimiento, métricas de cierre y reportes accionables.</p>
             <div class="hero-actions">
               <button class="btn primary" data-route="auth">Crear cuenta</button>
               <button class="btn secondary" data-action="start-demo">Demo local</button>
@@ -596,7 +623,7 @@ function renderPublic(route) {
             <div class="bullets">
               <span>Auth por correo y contraseña cuando Supabase está configurado.</span>
               <span>Base de datos PostgreSQL con RLS para aislar empresas.</span>
-              <span>Planes Starter, Enterprise y A cotizar con bloqueo mensual.</span>
+              <span>Dashboard comercial con pendientes, vencidas, vistas sin respuesta y tasa de cierre.</span>
               <span>Referidos con comisión recurrente por 12 meses.</span>
             </div>
           </div>
@@ -671,6 +698,7 @@ function renderApp(route) {
           ${navLink('dashboard', 'Dashboard')}
           ${navLink('quotes', 'Cotizaciones')}
           ${navLink('quote-new', 'Nueva cotización')}
+          ${navLink('reports', 'Seguimiento')}
           ${navLink('clients', 'Clientes')}
           ${navLink('catalog', 'Catálogo')}
           ${navLink('templates', 'Plantillas')}
@@ -702,6 +730,7 @@ function renderRoute(route) {
   switch (route) {
     case 'quotes': return renderQuotes();
     case 'quote-new': return renderQuoteForm();
+    case 'reports': return renderReports();
     case 'clients': return renderClients();
     case 'catalog': return renderCatalog();
     case 'templates': return renderTemplates();
@@ -714,44 +743,444 @@ function renderRoute(route) {
   }
 }
 
+function getQuoteEventTypes(quoteId) {
+  return getQuoteEvents(quoteId).map(e => e.event_type);
+}
+
+function getLastQuoteEventDate(quoteId, eventTypes = []) {
+  const types = new Set(eventTypes);
+  const event = getQuoteEvents(quoteId).find(e => !types.size || types.has(e.event_type));
+  return event?.created_at || '';
+}
+
+function getLastMessageDate(quoteId) {
+  return getQuoteMessageLogs(quoteId)[0]?.created_at || '';
+}
+
+function isTerminalQuote(quote) {
+  return ['accepted', 'rejected', 'expired'].includes(String(quote.status || '').toLowerCase());
+}
+
+function isQuoteExpired(quote) {
+  if (isTerminalQuote(quote) && quote.status !== 'expired') return false;
+  const days = daysBetween(quote.valid_until);
+  return days !== null && days < 0 && !['accepted', 'rejected'].includes(quote.status);
+}
+
+function isQuoteExpiringSoon(quote, daysWindow = 7) {
+  if (isTerminalQuote(quote)) return false;
+  const days = daysBetween(quote.valid_until);
+  return days !== null && days >= 0 && days <= daysWindow;
+}
+
+function getQuoteCommercialStatus(quote) {
+  if (quote.status === 'accepted') return 'accepted';
+  if (quote.status === 'rejected') return 'rejected';
+  if (quote.status === 'expired' || isQuoteExpired(quote)) return 'expired';
+  const events = getQuoteEventTypes(quote.id);
+  if (quote.status === 'sent' && events.includes('viewed')) return 'viewed_no_response';
+  if (quote.status === 'sent') return 'sent_not_viewed';
+  return quote.status || 'draft';
+}
+
+function commercialStatusLabel(status) {
+  return {
+    draft: 'Borrador',
+    sent: 'Enviada',
+    sent_not_viewed: 'Enviada sin ver',
+    viewed_no_response: 'Vista sin respuesta',
+    accepted: 'Aceptada',
+    rejected: 'Rechazada',
+    expired: 'Vencida'
+  }[status] || statusLabel(status);
+}
+
+function commercialBadge(status) {
+  const css = {
+    sent_not_viewed: 'sent',
+    viewed_no_response: 'warning',
+    expired: 'expired'
+  }[status] || status;
+  return `<span class="badge ${escapeHtml(css)}">${escapeHtml(commercialStatusLabel(status))}</span>`;
+}
+
+function quoteNeedsFollowup(quote) {
+  const status = getQuoteCommercialStatus(quote);
+  if (['accepted', 'rejected', 'expired', 'draft'].includes(status)) return false;
+  const lastContact = getLastMessageDate(quote.id) || getLastQuoteEventDate(quote.id, ['whatsapp_opened','whatsapp_copied','manual_followup','email_sent','link_created','viewed']) || quote.sent_at || quote.updated_at || quote.created_at;
+  const daysSince = lastContact ? Math.abs(daysBetween(new Date(), lastContact)) : 999;
+  return status === 'viewed_no_response' || status === 'sent_not_viewed' || daysSince >= 2 || isQuoteExpiringSoon(quote, 3);
+}
+
+function getCommercialAnalytics() {
+  const quotes = state.quotes || [];
+  const enriched = quotes.map(q => {
+    const totals = quoteTotals(q);
+    const status = getQuoteCommercialStatus(q);
+    const viewedAt = q.viewed_at || getLastQuoteEventDate(q.id, ['viewed']);
+    const lastContactAt = getLastMessageDate(q.id) || getLastQuoteEventDate(q.id, ['whatsapp_opened','whatsapp_copied','manual_followup','email_sent','link_created']);
+    return {
+      ...q,
+      totals,
+      client: getClient(q.client_id),
+      commercialStatus: status,
+      viewedAt,
+      lastContactAt,
+      daysToExpire: daysBetween(q.valid_until),
+      needsFollowup: quoteNeedsFollowup(q)
+    };
+  });
+
+  const accepted = enriched.filter(q => q.status === 'accepted');
+  const rejected = enriched.filter(q => q.status === 'rejected');
+  const pending = enriched.filter(q => !['accepted','rejected','expired'].includes(q.status));
+  const expired = enriched.filter(q => q.commercialStatus === 'expired');
+  const expiringSoon = enriched.filter(q => isQuoteExpiringSoon(q, 7));
+  const viewedNoResponse = enriched.filter(q => q.commercialStatus === 'viewed_no_response');
+  const sentNotViewed = enriched.filter(q => q.commercialStatus === 'sent_not_viewed');
+  const needsFollowup = enriched.filter(q => q.needsFollowup);
+  const totalActionable = pending.reduce((sum, q) => sum + q.totals.total, 0);
+  const totalAccepted = accepted.reduce((sum, q) => sum + q.totals.total, 0);
+  const totalRejected = rejected.reduce((sum, q) => sum + q.totals.total, 0);
+  const totalExpired = expired.reduce((sum, q) => sum + q.totals.total, 0);
+  const decidedCount = accepted.length + rejected.length;
+  const closeRate = decidedCount ? Math.round((accepted.length / decidedCount) * 100) : 0;
+
+  return {
+    quotes: enriched,
+    accepted,
+    rejected,
+    pending,
+    expired,
+    expiringSoon,
+    viewedNoResponse,
+    sentNotViewed,
+    needsFollowup,
+    totalActionable,
+    totalAccepted,
+    totalRejected,
+    totalExpired,
+    closeRate
+  };
+}
+
+function getTopClients(quotes = state.quotes) {
+  const map = new Map();
+  quotes.forEach(quote => {
+    const client = getClient(quote.client_id);
+    const key = quote.client_id || 'sin-cliente';
+    const row = map.get(key) || { name: client?.name || 'Sin cliente', quotes: 0, total: 0, accepted: 0 };
+    row.quotes += 1;
+    row.total += quoteTotals(quote).total;
+    if (quote.status === 'accepted') row.accepted += quoteTotals(quote).total;
+    map.set(key, row);
+  });
+  return [...map.values()].sort((a, b) => b.total - a.total).slice(0, 8);
+}
+
+function getTopServices(quotes = state.quotes) {
+  const map = new Map();
+  quotes.forEach(quote => {
+    (quote.items || []).forEach(item => {
+      const key = String(item.description || 'Sin descripción').trim().toLowerCase();
+      const row = map.get(key) || { name: item.description || 'Sin descripción', quantity: 0, quotes: new Set(), total: 0 };
+      row.quantity += Number(item.quantity || 0);
+      row.total += Number(item.total || 0);
+      row.quotes.add(quote.id);
+      map.set(key, row);
+    });
+  });
+  return [...map.values()].map(row => ({ ...row, quotes: row.quotes.size })).sort((a, b) => b.total - a.total).slice(0, 8);
+}
+
 function renderDashboard() {
-  const quotes = state.quotes;
-  const pending = quotes.filter(q => ['draft', 'sent'].includes(q.status));
-  const accepted = quotes.filter(q => q.status === 'accepted');
-  const totalPending = pending.reduce((sum, q) => sum + quoteTotals(q).total, 0);
-  const totalAccepted = accepted.reduce((sum, q) => sum + quoteTotals(q).total, 0);
-  const latest = [...quotes].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, 5);
+  const analytics = getCommercialAnalytics();
+  const latest = [...analytics.quotes].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, 6);
+  const topClients = getTopClients(analytics.quotes).slice(0, 5);
+  const topServices = getTopServices(analytics.quotes).slice(0, 5);
 
   return `
     <div class="page-header">
       <div>
-        <h1>Dashboard</h1>
-        <p>Resumen de clientes y cotizaciones. Fuente actual: ${mode === 'supabase' ? 'Supabase PostgreSQL' : 'LocalStorage'}.</p>
+        <h1>Dashboard comercial</h1>
+        <p>Seguimiento de oportunidades, vencimientos, tasa de cierre y montos por estado.</p>
       </div>
       <div class="header-actions">
         <button class="btn primary" data-route="quote-new">Nueva cotización</button>
-        <button class="btn secondary" data-route="clients">Crear cliente</button>
+        <button class="btn secondary" data-route="reports">Ver seguimiento</button>
       </div>
     </div>
 
     <section class="grid cols-4">
-      <div class="card metric"><span>Total cotizaciones</span><strong>${quotes.length}</strong></div>
-      <div class="card metric"><span>Pendientes</span><strong>${pending.length}</strong></div>
-      <div class="card metric"><span>Aceptadas</span><strong>${accepted.length}</strong></div>
-      <div class="card metric"><span>Clientes</span><strong>${state.clients.length}</strong></div>
+      <div class="card metric"><span>Cotizaciones</span><strong>${analytics.quotes.length}</strong></div>
+      <div class="card metric"><span>Pendientes</span><strong>${analytics.pending.length}</strong></div>
+      <div class="card metric"><span>Tasa de cierre</span><strong>${analytics.closeRate}%</strong></div>
+      <div class="card metric"><span>Necesitan seguimiento</span><strong>${analytics.needsFollowup.length}</strong></div>
+    </section>
+
+    <section class="grid cols-4" style="margin-top:18px;">
+      <div class="card metric"><span>Monto pendiente</span><strong>${money(analytics.totalActionable)}</strong></div>
+      <div class="card metric"><span>Monto aceptado</span><strong>${money(analytics.totalAccepted)}</strong></div>
+      <div class="card metric"><span>Monto rechazado</span><strong>${money(analytics.totalRejected)}</strong></div>
+      <div class="card metric"><span>Monto vencido</span><strong>${money(analytics.totalExpired)}</strong></div>
+    </section>
+
+    ${renderCommercialAlerts(analytics)}
+    ${renderUsageCard()}
+
+    <section class="grid cols-2" style="margin-top:18px;">
+      <div class="card">
+        <h2>Top clientes por monto cotizado</h2>
+        ${topClients.length ? renderTopClientsTable(topClients) : `<div class="empty">Todavía no hay clientes cotizados.</div>`}
+      </div>
+      <div class="card">
+        <h2>Top servicios cotizados</h2>
+        ${topServices.length ? renderTopServicesTable(topServices) : `<div class="empty">Todavía no hay servicios cotizados.</div>`}
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <div class="page-header" style="margin-bottom:12px;">
+        <div>
+          <h2>Últimas cotizaciones</h2>
+          <p>Vista rápida de estado comercial y próxima acción.</p>
+        </div>
+        <button class="btn secondary" data-route="reports">Abrir reporte completo</button>
+      </div>
+      ${latest.length ? renderAnalyticsQuoteTable(latest, true) : `<div class="empty">Todavía no tienes cotizaciones.</div>`}
+    </section>
+  `;
+}
+
+function renderCommercialAlerts(analytics) {
+  const alerts = [];
+  if (analytics.needsFollowup.length) alerts.push({ type: 'warning', title: `${analytics.needsFollowup.length} cotizaciones necesitan seguimiento`, detail: 'Prioriza vistas sin respuesta, enviadas sin ver o próximas a vencer.' });
+  if (analytics.expiringSoon.length) alerts.push({ type: 'warning', title: `${analytics.expiringSoon.length} cotizaciones vencen pronto`, detail: 'Revisa vigencias dentro de los próximos 7 días.' });
+  if (analytics.viewedNoResponse.length) alerts.push({ type: 'info', title: `${analytics.viewedNoResponse.length} cotizaciones fueron vistas sin respuesta`, detail: 'Buen momento para enviar seguimiento manual por WhatsApp.' });
+  if (!alerts.length) alerts.push({ type: 'ok', title: 'No hay alertas comerciales críticas', detail: 'Las cotizaciones activas no requieren acción inmediata.' });
+
+  return `
+    <section class="grid cols-3" style="margin-top:18px;">
+      ${alerts.slice(0, 3).map(alert => `
+        <div class="card insight ${alert.type}">
+          <strong>${escapeHtml(alert.title)}</strong>
+          <span>${escapeHtml(alert.detail)}</span>
+        </div>
+      `).join('')}
+    </section>
+  `;
+}
+
+function renderTopClientsTable(rows) {
+  return `
+    <div class="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Cliente</th><th>Cotizaciones</th><th>Total</th><th>Aceptado</th></tr></thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td><strong>${escapeHtml(row.name)}</strong></td>
+              <td>${row.quotes}</td>
+              <td>${money(row.total)}</td>
+              <td>${money(row.accepted)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderTopServicesTable(rows) {
+  return `
+    <div class="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Servicio</th><th>Cant.</th><th>Cotizaciones</th><th>Total</th></tr></thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td><strong>${escapeHtml(row.name)}</strong></td>
+              <td>${Number(row.quantity || 0).toFixed(2)}</td>
+              <td>${row.quotes}</td>
+              <td>${money(row.total)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function reportFilters() {
+  return state.reportFilters || { period: 'all', status: 'all', attention: 'all' };
+}
+
+function applyReportFilters(quotes, filters = reportFilters()) {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const last30 = new Date(now.getTime() - 30 * 86400000);
+  const last90 = new Date(now.getTime() - 90 * 86400000);
+
+  return quotes.filter(quote => {
+    const createdAt = safeDate(quote.created_at) || now;
+    if (filters.period === 'month' && createdAt < startOfMonth) return false;
+    if (filters.period === 'last30' && createdAt < last30) return false;
+    if (filters.period === 'last90' && createdAt < last90) return false;
+
+    if (filters.status !== 'all' && quote.commercialStatus !== filters.status && quote.status !== filters.status) return false;
+
+    if (filters.attention === 'needs_followup' && !quote.needsFollowup) return false;
+    if (filters.attention === 'viewed_no_response' && quote.commercialStatus !== 'viewed_no_response') return false;
+    if (filters.attention === 'expiring' && !isQuoteExpiringSoon(quote, 7)) return false;
+    if (filters.attention === 'expired' && quote.commercialStatus !== 'expired') return false;
+
+    return true;
+  });
+}
+
+function renderReports() {
+  const analytics = getCommercialAnalytics();
+  const filters = reportFilters();
+  const filtered = applyReportFilters(analytics.quotes, filters).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const filteredTotal = filtered.reduce((sum, q) => sum + q.totals.total, 0);
+
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Seguimiento comercial</h1>
+        <p>Prioriza cotizaciones por estado, vigencia, respuesta del cliente y monto.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn primary" data-route="quote-new">Nueva cotización</button>
+        <button class="btn secondary" data-action="clear-report-filters">Limpiar filtros</button>
+      </div>
+    </div>
+
+    <section class="grid cols-4">
+      <div class="card metric"><span>Filtradas</span><strong>${filtered.length}</strong></div>
+      <div class="card metric"><span>Monto filtrado</span><strong>${money(filteredTotal)}</strong></div>
+      <div class="card metric"><span>Vistas sin respuesta</span><strong>${analytics.viewedNoResponse.length}</strong></div>
+      <div class="card metric"><span>Vencen pronto</span><strong>${analytics.expiringSoon.length}</strong></div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <form data-form="report-filters" class="form-grid three">
+        <div class="field"><label>Periodo</label>
+          <select name="period">
+            ${[
+              ['all','Todo'], ['month','Este mes'], ['last30','Últimos 30 días'], ['last90','Últimos 90 días']
+            ].map(([value, label]) => `<option value="${value}" ${filters.period === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Estado</label>
+          <select name="status">
+            ${[
+              ['all','Todos'], ['draft','Borrador'], ['sent','Enviada'], ['sent_not_viewed','Enviada sin ver'], ['viewed_no_response','Vista sin respuesta'], ['accepted','Aceptada'], ['rejected','Rechazada'], ['expired','Vencida']
+            ].map(([value, label]) => `<option value="${value}" ${filters.status === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Atención</label>
+          <select name="attention">
+            ${[
+              ['all','Todas'], ['needs_followup','Necesitan seguimiento'], ['viewed_no_response','Vistas sin respuesta'], ['expiring','Por vencer'], ['expired','Vencidas']
+            ].map(([value, label]) => `<option value="${value}" ${filters.attention === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn primary" type="submit">Aplicar filtros</button>
+      </form>
     </section>
 
     <section class="grid cols-2" style="margin-top:18px;">
-      <div class="card metric"><span>Monto pendiente</span><strong>${money(totalPending)}</strong></div>
-      <div class="card metric"><span>Monto aceptado</span><strong>${money(totalAccepted)}</strong></div>
+      <div class="card">
+        <h2>Alertas de seguimiento</h2>
+        ${renderReportAlertList(analytics)}
+      </div>
+      <div class="card">
+        <h2>Embudo comercial</h2>
+        ${renderPipelineSummary(analytics)}
+      </div>
     </section>
-
-    ${renderUsageCard()}
 
     <section class="card" style="margin-top:18px;">
-      <h2>Últimas cotizaciones</h2>
-      ${latest.length ? renderQuotesTable(latest, true) : `<div class="empty">Todavía no tienes cotizaciones.</div>`}
+      <h2>Cotizaciones</h2>
+      ${filtered.length ? renderAnalyticsQuoteTable(filtered) : `<div class="empty">No hay cotizaciones para los filtros seleccionados.</div>`}
     </section>
+  `;
+}
+
+function renderReportAlertList(analytics) {
+  const rows = [
+    ['Necesitan seguimiento', analytics.needsFollowup.length, money(analytics.needsFollowup.reduce((sum, q) => sum + q.totals.total, 0))],
+    ['Vistas sin respuesta', analytics.viewedNoResponse.length, money(analytics.viewedNoResponse.reduce((sum, q) => sum + q.totals.total, 0))],
+    ['Enviadas sin ver', analytics.sentNotViewed.length, money(analytics.sentNotViewed.reduce((sum, q) => sum + q.totals.total, 0))],
+    ['Por vencer', analytics.expiringSoon.length, money(analytics.expiringSoon.reduce((sum, q) => sum + q.totals.total, 0))],
+    ['Vencidas', analytics.expired.length, money(analytics.expired.reduce((sum, q) => sum + q.totals.total, 0))]
+  ];
+  return `
+    <div class="insight-list">
+      ${rows.map(([label, count, amount]) => `
+        <div class="insight-row"><span>${label}</span><strong>${count}</strong><em>${amount}</em></div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderPipelineSummary(analytics) {
+  const rows = [
+    ['Borrador', analytics.quotes.filter(q => q.status === 'draft').length],
+    ['Enviadas', analytics.quotes.filter(q => q.status === 'sent').length],
+    ['Vistas sin respuesta', analytics.viewedNoResponse.length],
+    ['Aceptadas', analytics.accepted.length],
+    ['Rechazadas', analytics.rejected.length],
+    ['Vencidas', analytics.expired.length]
+  ];
+  const max = Math.max(1, ...rows.map(([, count]) => count));
+  return `
+    <div class="pipeline">
+      ${rows.map(([label, count]) => `
+        <div class="pipeline-row">
+          <span>${label}</span>
+          <div class="pipeline-bar"><i style="width:${Math.max(4, Math.round((count / max) * 100))}%"></i></div>
+          <strong>${count}</strong>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderAnalyticsQuoteTable(quotes, compact = false) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Número</th><th>Cliente</th><th>Estado comercial</th><th>Total</th><th>Vigencia</th><th>Última actividad</th>${compact ? '' : '<th>Acciones</th>'}
+          </tr>
+        </thead>
+        <tbody>
+          ${quotes.map(quote => {
+            const lastActivity = quote.lastContactAt || quote.viewedAt || quote.updated_at || quote.created_at;
+            return `
+              <tr class="${quote.needsFollowup ? 'row-warning' : ''}">
+                <td><strong>${escapeHtml(quote.quote_number)}</strong>${quote.needsFollowup ? '<br><span class="help">Requiere seguimiento</span>' : ''}</td>
+                <td>${escapeHtml(quote.client?.name || 'Sin cliente')}</td>
+                <td>${commercialBadge(quote.commercialStatus)}</td>
+                <td>${money(quote.totals.total)}</td>
+                <td>${escapeHtml(quote.valid_until || '')}${quote.daysToExpire !== null ? `<br><span class="help">${quote.daysToExpire < 0 ? `Venció hace ${Math.abs(quote.daysToExpire)} día(s)` : `Faltan ${quote.daysToExpire} día(s)`}</span>` : ''}</td>
+                <td>${lastActivity ? formatDateTime(lastActivity) : 'Sin actividad'}</td>
+                ${compact ? '' : `
+                  <td class="actions">
+                    <button class="btn secondary small" data-route="quote-view/${quote.id}">Ver</button>
+                    <button class="btn secondary small" data-action="open-whatsapp" data-id="${quote.id}">WhatsApp</button>
+                    <button class="btn secondary small" data-action="manual-followup" data-id="${quote.id}">Registrar</button>
+                  </td>
+                `}
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -2221,6 +2650,19 @@ async function copyAffiliateLink() {
   toast('Link de referido copiado.');
 }
 
+
+function handleReportFilters(form) {
+  const fd = new FormData(form);
+  state.reportFilters = {
+    period: String(fd.get('period') || 'all'),
+    status: String(fd.get('status') || 'all'),
+    attention: String(fd.get('attention') || 'all')
+  };
+  saveLocalState();
+  setRoute('reports');
+  render();
+}
+
 app.addEventListener('click', async (event) => {
   const route = event.target.closest('[data-route]')?.dataset.route;
   const actionEl = event.target.closest('[data-action]');
@@ -2263,6 +2705,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'delete-product-service') await deleteProductService(id);
     if (action === 'seed-catalog') await seedCatalogForBusinessType();
     if (action === 'delete-message-template') await deleteMessageTemplate(id);
+    if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
   } catch (error) {
     console.error(error);
     toast(error.message || 'Ocurrió un error.');
@@ -2281,6 +2724,7 @@ app.addEventListener('submit', async (event) => {
     if (type === 'affiliate') await saveAffiliate(form);
     if (type === 'product-service') await saveProductService(form);
     if (type === 'message-template') await saveMessageTemplate(form);
+    if (type === 'report-filters') handleReportFilters(form);
   } catch (error) {
     console.error(error);
     toast(error.message || 'No se pudo guardar.');
