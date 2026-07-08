@@ -2,6 +2,7 @@ const STORAGE_KEY = 'cotizaflow_fase7_local_state_v1';
 const config = window.COTIZAFLOW_CONFIG || {};
 const app = document.getElementById('app');
 const REFERRAL_STORAGE_KEY = 'cotizaflow_pending_referral_code_v1';
+const QUOTE_DRAFT_STORAGE_KEY = 'cotizaflow_quote_form_draft_v1';
 
 const PLAN_CATALOG = {
   free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, catalogLimit: 10, description: 'Prueba limitada para validar el producto.' },
@@ -109,7 +110,15 @@ async function init() {
       }
     });
 
-    supabaseClient.auth.onAuthStateChange((_event, session) => {
+    supabaseClient.auth.onAuthStateChange((event, session) => {
+      // Evita recargar toda la aplicación cuando Supabase solo refresca el token.
+      // Esa recarga era la causa de que una cotización sin guardar perdiera sus items
+      // al cambiar de pestaña y volver al navegador.
+      if (['TOKEN_REFRESHED', 'USER_UPDATED'].includes(event)) {
+        if (session?.user) state.session = normalizeSession(session.user);
+        return;
+      }
+
       // Supabase recomienda no esperar queries dentro del callback de Auth.
       // Se difiere la carga para evitar que la pantalla quede fija en "Cargando...".
       setTimeout(async () => {
@@ -214,6 +223,78 @@ function normalizeSession(user) {
     name: user.user_metadata?.full_name || user.email || 'Usuario',
     provider: mode
   };
+}
+
+
+function quoteDraftKey(id = '') {
+  const userId = state.session?.id || 'local-user';
+  const companyId = state.company?.id || 'local-company';
+  return `${QUOTE_DRAFT_STORAGE_KEY}:${userId}:${companyId}:${id || 'new'}`;
+}
+
+function loadQuoteDraft(id = '') {
+  try {
+    const raw = sessionStorage.getItem(quoteDraftKey(id));
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (!draft || !Array.isArray(draft.items)) return null;
+    return draft;
+  } catch (error) {
+    console.warn('No se pudo leer el borrador temporal de cotización:', error);
+    return null;
+  }
+}
+
+function clearQuoteDraft(id = '') {
+  try {
+    sessionStorage.removeItem(quoteDraftKey(id));
+  } catch (error) {
+    console.warn('No se pudo limpiar el borrador temporal de cotización:', error);
+  }
+}
+
+function collectQuoteDraftFromForm(form) {
+  const rows = [...form.querySelectorAll('[data-item-row]')];
+  const items = rows.map((row, index) => {
+    const description = row.querySelector('[name="item_description"]')?.value.trim() || '';
+    const quantity = Number(row.querySelector('[name="item_quantity"]')?.value || 0);
+    const unit_price = Number(row.querySelector('[name="item_unit_price"]')?.value || 0);
+    return {
+      id: uid('draft_item'),
+      description,
+      quantity,
+      unit_price,
+      total: quantity * unit_price,
+      position: index
+    };
+  });
+
+  return {
+    id: form.dataset.id || '',
+    quote_number: form.querySelector('[name="quote_number"]')?.value.trim() || '',
+    client_id: form.querySelector('[name="client_id"]')?.value || '',
+    status: form.querySelector('[name="status"]')?.value || 'draft',
+    valid_until: form.querySelector('[name="valid_until"]')?.value || '',
+    tax_rate: Number(form.querySelector('[name="tax_rate"]')?.value || 0),
+    currency: form.querySelector('[name="currency"]')?.value.trim().toUpperCase() || state.company?.currency || 'USD',
+    notes: form.querySelector('[name="notes"]')?.value || '',
+    items: items.length ? items : [{ id: uid('draft_item'), description: '', quantity: 1, unit_price: 0, total: 0, position: 0 }],
+    saved_at: new Date().toISOString()
+  };
+}
+
+function saveQuoteDraftFromForm(form) {
+  if (!form || form.dataset.form !== 'quote') return;
+  try {
+    const draft = collectQuoteDraftFromForm(form);
+    sessionStorage.setItem(quoteDraftKey(draft.id), JSON.stringify(draft));
+  } catch (error) {
+    console.warn('No se pudo guardar el borrador temporal de cotización:', error);
+  }
+}
+
+function getCurrentQuoteForm() {
+  return document.querySelector('[data-form="quote"]');
 }
 
 async function loadRemoteData() {
@@ -1820,7 +1901,7 @@ function renderCompanyQuoteHeader(quote = null) {
 function renderQuoteForm(id) {
   const quote = id ? state.quotes.find(q => q.id === id) : null;
   const editing = Boolean(quote);
-  const current = quote || {
+  let current = quote ? clone(quote) : {
     id: '',
     quote_number: nextQuoteNumber(),
     client_id: state.prefillClientId || state.clients[0]?.id || '',
@@ -1831,6 +1912,17 @@ function renderQuoteForm(id) {
     notes: state.company?.default_quote_notes || defaultCompany.default_quote_notes,
     items: [{ id: uid('item'), description: '', quantity: 1, unit_price: 0, total: 0 }]
   };
+
+  const draft = loadQuoteDraft(id || '');
+  if (draft) {
+    current = {
+      ...current,
+      ...draft,
+      id: quote?.id || '',
+      items: draft.items?.length ? draft.items : current.items
+    };
+  }
+
   const limitReached = !editing && !canCreateQuote();
   const usage = getPlanUsage();
 
@@ -1845,6 +1937,7 @@ function renderQuoteForm(id) {
 
     ${state.clients.length ? '' : `<div class="notice warning">Primero debes crear un cliente para asociar la cotización.</div>`}
     ${limitReached ? `<div class="notice warning">Llegaste al límite del plan ${escapeHtml(usage.plan.name)}: ${usage.used}/${usage.limit} cotizaciones este mes. Sube de plan para crear más.</div>` : ''}
+    ${draft ? `<div class="notice">Se restauró un borrador temporal no guardado de esta cotización.</div>` : ''}
 
     <form data-form="quote" data-id="${escapeHtml(current.id)}" class="form-grid">
       <section class="card">
@@ -2434,6 +2527,7 @@ async function saveQuote(form) {
     }));
     const { error: itemsError } = await supabaseClient.from('quote_items').insert(itemsPayload);
     if (itemsError) throw itemsError;
+    clearQuoteDraft(quote.id || '');
     await loadRemoteData();
     setRoute(`quote-view/${saved.id}`);
     return;
@@ -2451,6 +2545,7 @@ async function saveQuote(form) {
       updated_at: new Date().toISOString()
     });
   }
+  clearQuoteDraft(quote.id || '');
   saveLocalState();
   toast('Cotización guardada.');
   const savedId = quote.id || state.quotes[0].id;
@@ -2497,6 +2592,7 @@ function addItemRow() {
   if (!container) return;
   container.insertAdjacentHTML('beforeend', renderItemRow({ description: '', quantity: 1, unit_price: 0, total: 0 }));
   recalcQuoteForm();
+  saveQuoteDraftFromForm(getCurrentQuoteForm());
 }
 
 function removeItemRow(button) {
@@ -2507,6 +2603,7 @@ function removeItemRow(button) {
   }
   button.closest('[data-item-row]').remove();
   recalcQuoteForm();
+  saveQuoteDraftFromForm(getCurrentQuoteForm());
 }
 
 function whatsappMessage(quote, publicUrl = '') {
@@ -2674,6 +2771,7 @@ function addCatalogItemToQuote() {
   }
 
   recalcQuoteForm();
+  saveQuoteDraftFromForm(getCurrentQuoteForm());
   select.value = '';
   toast('Item agregado desde catálogo.');
 }
@@ -3119,15 +3217,27 @@ app.addEventListener('submit', async (event) => {
 });
 
 app.addEventListener('input', (event) => {
-  if (event.target.closest('[data-form="quote"]')) recalcQuoteForm();
+  const quoteForm = event.target.closest('[data-form="quote"]');
+  if (quoteForm) {
+    recalcQuoteForm();
+    saveQuoteDraftFromForm(quoteForm);
+  }
 });
 
 app.addEventListener('change', (event) => {
+  const quoteForm = event.target.closest('[data-form="quote"]');
+  if (quoteForm) {
+    recalcQuoteForm();
+    saveQuoteDraftFromForm(quoteForm);
+  }
   if (event.target.matches('[data-logo-input]')) handleLogoFileInput(event.target);
 });
 
 window.addEventListener('hashchange', render);
 window.addEventListener('pageshow', restoreVisibleApp);
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') saveQuoteDraftFromForm(getCurrentQuoteForm());
   if (document.visibilityState === 'visible') restoreVisibleApp();
 });
+
+window.addEventListener('pagehide', () => saveQuoteDraftFromForm(getCurrentQuoteForm()));
