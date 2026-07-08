@@ -258,3 +258,74 @@ button:disabled, input:disabled { opacity: .6; cursor: not-allowed; }
   .pipeline-row { grid-template-columns: 1fr; }
   .insight-row { grid-template-columns: 1fr; }
 }
+
+/* Fase 7: landing profesional, configuración, CRM y logo */
+.marketing-page .topbar { margin-bottom: 54px; }
+.marketing-nav a { color: #334155; text-decoration: none; font-weight: 800; padding: 10px 4px; }
+.marketing-hero { align-items: center; }
+.trust-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.trust-row span { background: #fff; border: 1px solid var(--border); border-radius: 999px; padding: 8px 12px; color: #334155; font-weight: 800; font-size: 13px; }
+.marketing-preview-stack { position: relative; }
+.quote-document-card { transform: rotate(.7deg); }
+.quote-logo-sample { width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; background: #0f766e; color: #fff; font-weight: 900; margin-bottom: 10px; }
+.mini-dashboard-card { position: absolute; right: -12px; bottom: -38px; width: 260px; background: #0f172a; color: #fff; border-radius: 18px; padding: 16px; box-shadow: var(--shadow); display: grid; gap: 10px; }
+.mini-dashboard-card div { display: flex; justify-content: space-between; color: #cbd5e1; }
+.mini-dashboard-card b { color: #fff; }
+.marketing-section { margin-top: 72px; }
+.section-heading { max-width: 780px; margin-bottom: 22px; }
+.section-heading h2, .split-section h2, .footer-section h2 { font-size: clamp(28px, 4vw, 44px); line-height: 1.08; letter-spacing: -.035em; margin: 16px 0 10px; }
+.section-copy { color: var(--muted); line-height: 1.65; font-size: 17px; }
+.feature-card, .testimonial-card, .sample-quote-small { background: #fff; border: 1px solid var(--border); border-radius: 20px; padding: 20px; box-shadow: 0 8px 28px rgba(15,23,42,.04); }
+.feature-card h3 { margin: 0 0 8px; }
+.feature-card p, .testimonial-card p { color: var(--muted); line-height: 1.55; margin: 0; }
+.split-section { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 30px; align-items: center; }
+.use-case-list { display: grid; gap: 10px; margin-top: 18px; }
+.use-case-list span { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; color: #334155; }
+.quote-example-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.sample-quote-small { display: grid; gap: 8px; }
+.sample-quote-small span { color: var(--muted); }
+.sample-quote-small b { font-size: 22px; }
+.testimonials .testimonial-card { min-height: 140px; display: grid; align-content: space-between; gap: 16px; }
+.footer-section { border-top: 1px solid var(--border); padding-top: 32px; padding-bottom: 34px; display: grid; gap: 18px; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 14px; }
+.footer-links a { color: var(--primary-dark); font-weight: 900; text-decoration: none; }
+.legal-copy { color: var(--muted); line-height: 1.6; font-size: 14px; background: rgba(255,255,255,.72); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
+.auth-modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, .56); backdrop-filter: blur(4px); z-index: 100; display: grid; place-items: center; padding: 20px; }
+.auth-modal { margin: 0; width: min(470px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; }
+.modal-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+.modal-header h2 { margin: 0 0 4px; }
+.modal-header p { margin: 0; color: var(--muted); }
+.config-grid .config-card { text-align: left; color: var(--text); background: #fff; border: 1px solid var(--border); min-height: 128px; display: grid; gap: 8px; align-content: start; }
+.config-card strong { font-size: 17px; }
+.config-card span { color: var(--muted); line-height: 1.4; }
+.config-card.active { border-color: rgba(15,118,110,.45); box-shadow: 0 12px 32px rgba(15,118,110,.10); }
+.logo-upload-row { display: grid; grid-template-columns: 180px minmax(0,1fr); gap: 16px; align-items: center; }
+.logo-preview { min-height: 110px; border: 1px dashed var(--border); border-radius: 16px; display: grid; place-items: center; background: #f8fafc; color: var(--muted); overflow: hidden; }
+.logo-preview img { max-width: 100%; max-height: 100px; object-fit: contain; }
+.quote-brand-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.quote-brand-header.center-logo { display: grid; justify-items: center; text-align: center; }
+.quote-brand-header.left-logo .brand-side, .quote-brand-header.right-logo .brand-side { display: flex; align-items: flex-start; gap: 14px; }
+.quote-brand-header.right-logo .brand-side.right { justify-content: flex-end; text-align: right; }
+.quote-company-logo { width: 92px; max-height: 62px; object-fit: contain; border-radius: 10px; }
+.quote-number-block { min-width: 170px; text-align: right; }
+.center-logo .quote-number-block { text-align: center; }
+.badge.lead, .badge.priority, .badge.active, .badge.inactive, .badge.lost { background: #f1f5f9; color: #334155; border-color: #e2e8f0; }
+.badge.priority { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.badge.active { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+.badge.inactive { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
+.badge.lost { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+.tag-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.tag-row span { background: #ecfeff; border: 1px solid #a5f3fc; color: #155e75; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 800; }
+.crm-table td { min-width: 150px; }
+
+@media (max-width: 900px) {
+  .marketing-nav a { display: none; }
+  .split-section { grid-template-columns: 1fr; }
+  .quote-example-grid { grid-template-columns: 1fr; }
+  .mini-dashboard-card { position: static; width: auto; margin-top: 14px; }
+  .logo-upload-row { grid-template-columns: 1fr; }
+  .quote-brand-header, .quote-brand-header.left-logo .brand-side, .quote-brand-header.right-logo .brand-side { display: grid; text-align: left; }
+  .quote-number-block { text-align: left; }
+}
+.link-button { border: 0; background: transparent; color: #334155; font-weight: 800; padding: 10px 4px; cursor: pointer; }
+.footer-links .link-button { color: var(--primary-dark); font-weight: 900; text-decoration: none; }

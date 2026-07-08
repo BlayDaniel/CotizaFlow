@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'cotizaflow_fase2_local_state_v1';
+const STORAGE_KEY = 'cotizaflow_fase7_local_state_v1';
 const config = window.COTIZAFLOW_CONFIG || {};
 const app = document.getElementById('app');
 const REFERRAL_STORAGE_KEY = 'cotizaflow_pending_referral_code_v1';
@@ -32,6 +32,7 @@ let state = {
   businessTemplates: [],
   pendingReferralCode: captureReferralCode(),
   reportFilters: { period: 'all', status: 'all', attention: 'all' },
+  clientFilters: { status: 'all', search: '' },
   authMessage: '',
   activeAuthTab: 'login'
 };
@@ -50,7 +51,8 @@ const defaultCompany = {
   business_type: 'general',
   default_quote_notes: 'Gracias por considerar nuestra propuesta. Esta cotización está sujeta a disponibilidad y vigencia indicada.',
   default_terms: '',
-  default_whatsapp_template: ''
+  default_whatsapp_template: '',
+  logo_position: 'right'
 };
 
 const localDefaultState = {
@@ -68,7 +70,8 @@ const localDefaultState = {
   messageTemplates: [],
   productsServices: [],
   businessTemplates: [],
-  reportFilters: { period: 'all', status: 'all', attention: 'all' }
+  reportFilters: { period: 'all', status: 'all', attention: 'all' },
+  clientFilters: { status: 'all', search: '' }
 };
 
 function sanitizeReferralCode(value) {
@@ -168,7 +171,8 @@ function loadLocalState() {
       messageTemplates: parsed.messageTemplates || [],
       productsServices: parsed.productsServices || [],
       businessTemplates: parsed.businessTemplates || [],
-      reportFilters: parsed.reportFilters || { period: 'all', status: 'all', attention: 'all' }
+      reportFilters: parsed.reportFilters || { period: 'all', status: 'all', attention: 'all' },
+      clientFilters: parsed.clientFilters || { status: 'all', search: '' }
     };
   } catch (error) {
     console.error(error);
@@ -193,7 +197,8 @@ function saveLocalState() {
     messageTemplates: state.messageTemplates,
     productsServices: state.productsServices,
     businessTemplates: state.businessTemplates,
-    reportFilters: state.reportFilters
+    reportFilters: state.reportFilters,
+    clientFilters: state.clientFilters
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -600,59 +605,162 @@ function render() {
 
 function renderPublic(route) {
   const usingSupabase = mode === 'supabase';
+  const showAuth = route === 'auth';
   app.innerHTML = `
-    <main class="landing app-page">
+    <main class="landing app-page marketing-page">
       <div class="landing-inner">
-        <header class="topbar">
+        <header class="topbar marketing-topbar">
           <div class="brand"><span class="brand-mark">C</span> CotizaFlow</div>
-          <div class="nav-actions">
+          <div class="nav-actions marketing-nav">
+            <button class="link-button" data-scroll-target="features">Funciones</button>
+            <button class="link-button" data-scroll-target="use-cases">Casos de uso</button>
+            <button class="link-button" data-scroll-target="plans">Planes</button>
+            <button class="link-button" data-scroll-target="contact">Contacto</button>
             <button class="btn ghost" data-route="auth">Entrar</button>
-            <button class="btn primary" data-action="start-demo">Probar demo local</button>
+            <button class="btn primary" data-route="auth">Crear cuenta</button>
           </div>
         </header>
 
-        <section class="hero">
+        <section class="hero marketing-hero">
           <div>
-            <span class="eyebrow">Fase 6 · ${usingSupabase ? 'Supabase conectado' : 'modo local hasta configurar Supabase'}</span>
-            <h1>Cotizaciones profesionales con seguimiento comercial.</h1>
-            <p>Crea clientes, cotizaciones y PDF. La fase 6 agrega dashboard comercial, alertas de seguimiento, métricas de cierre y reportes accionables.</p>
+            <span class="eyebrow">${usingSupabase ? 'Sistema conectado a Supabase' : 'Demo local disponible'}</span>
+            <h1>Cotizaciones profesionales en minutos, con seguimiento hasta cerrar la venta.</h1>
+            <p>CotizaFlow ayuda a talleres, técnicos, instaladores, imprentas y suplidores a crear cotizaciones claras, enviarlas por WhatsApp y dar seguimiento comercial sin depender de Excel.</p>
             <div class="hero-actions">
-              <button class="btn primary" data-route="auth">Crear cuenta</button>
-              <button class="btn secondary" data-action="start-demo">Demo local</button>
+              <button class="btn primary" data-route="auth">Iniciar sesión / Crear cuenta</button>
+              <button class="btn secondary" data-action="start-demo">Probar demo local</button>
             </div>
-            <div class="bullets">
-              <span>Auth por correo y contraseña cuando Supabase está configurado.</span>
-              <span>Base de datos PostgreSQL con RLS para aislar empresas.</span>
-              <span>Dashboard comercial con pendientes, vencidas, vistas sin respuesta y tasa de cierre.</span>
-              <span>Referidos con comisión recurrente por 12 meses.</span>
+            <div class="trust-row">
+              <span>PDF profesional</span>
+              <span>Links públicos</span>
+              <span>WhatsApp manual</span>
+              <span>Dashboard comercial</span>
             </div>
           </div>
 
-          <div class="preview-card">
-            <div class="quote-preview">
-              <div class="quote-preview-header">
-                <div>
-                  <h3>Cotización</h3>
-                  <div class="num">CF-2026-0001</div>
+          <div class="marketing-preview-stack">
+            <div class="preview-card quote-document-card">
+              <div class="quote-preview">
+                <div class="quote-preview-header">
+                  <div>
+                    <div class="quote-logo-sample">CF</div>
+                    <h3>Talleres Almonte</h3>
+                    <div class="num">RNC 000-000000-0</div>
+                  </div>
+                  <div style="text-align:right;">
+                    <h3>Cotización</h3>
+                    <div class="num">CF-2026-0001</div>
+                    ${statusBadge('sent')}
+                  </div>
                 </div>
-                ${statusBadge('sent')}
+                <div class="quote-line"><span>Diagnóstico general</span><strong>US$35.00</strong></div>
+                <div class="quote-line"><span>Cambio de aceite</span><strong>US$45.00</strong></div>
+                <div class="quote-line"><span>Materiales</span><strong>US$28.00</strong></div>
+                <div class="quote-total"><span>Total</span><span>US$108.00</span></div>
               </div>
-              <div class="quote-line"><span>Servicio profesional</span><strong>US$350.00</strong></div>
-              <div class="quote-line"><span>Materiales</span><strong>US$180.00</strong></div>
-              <div class="quote-line"><span>Instalación</span><strong>US$75.00</strong></div>
-              <div class="quote-total"><span>Total</span><span>US$605.00</span></div>
+            </div>
+            <div class="mini-dashboard-card">
+              <strong>Seguimiento comercial</strong>
+              <div><span>Vistas sin respuesta</span><b>4</b></div>
+              <div><span>Por vencer</span><b>2</b></div>
+              <div><span>Tasa de cierre</span><b>38%</b></div>
             </div>
           </div>
         </section>
 
-        <section id="auth" class="login-box ${route === 'auth' ? '' : 'hidden'}">
-          ${renderAuthBox()}
+        <section id="features" class="marketing-section">
+          <div class="section-heading">
+            <span class="eyebrow">Funciones clave</span>
+            <h2>Todo lo necesario para cotizar y dar seguimiento.</h2>
+          </div>
+          <div class="grid cols-3">
+            <div class="feature-card"><h3>Cotizaciones con PDF</h3><p>Cliente, productos, impuestos, notas, logo y formato profesional listo para compartir.</p></div>
+            <div class="feature-card"><h3>Seguimiento comercial</h3><p>Detecta cotizaciones vistas sin respuesta, vencidas, por vencer o enviadas sin abrir.</p></div>
+            <div class="feature-card"><h3>Catálogo reutilizable</h3><p>Guarda servicios frecuentes y agrégalos a una cotización con un clic.</p></div>
+            <div class="feature-card"><h3>WhatsApp manual</h3><p>Mensajes prellenados sin pagar API. Copia, abre WhatsApp y registra la actividad.</p></div>
+            <div class="feature-card"><h3>CRM ligero</h3><p>Historial del cliente, montos cotizados, aceptados, último seguimiento y próximas acciones.</p></div>
+            <div class="feature-card"><h3>Planes y referidos</h3><p>Pagos, límites por plan y programa de referidos preparado para monetización.</p></div>
+          </div>
+        </section>
+
+        <section id="use-cases" class="marketing-section split-section">
+          <div>
+            <span class="eyebrow">Casos de uso</span>
+            <h2>Diseñado para negocios que venden servicios y productos por conversación.</h2>
+            <p class="section-copy">CotizaFlow funciona para talleres, instalaciones de cámaras, servicios eléctricos, aires acondicionados, imprentas, agencias de carga, suplidores y vendedores independientes.</p>
+            <div class="use-case-list">
+              <span>Taller automotriz: diagnóstico, piezas y mano de obra.</span>
+              <span>CCTV: equipos, cableado, instalación y soporte.</span>
+              <span>Imprenta: diseño, impresión, cantidades y entrega.</span>
+              <span>Carga: flete, manejo, documentación y transporte.</span>
+            </div>
+          </div>
+          <div class="quote-example-grid">
+            <div class="sample-quote-small"><strong>CCTV</strong><span>Instalación cámara IP</span><b>US$250.00</b></div>
+            <div class="sample-quote-small"><strong>Aires</strong><span>Mantenimiento split</span><b>US$45.00</b></div>
+            <div class="sample-quote-small"><strong>Imprenta</strong><span>Flyers a color</span><b>US$60.00</b></div>
+            <div class="sample-quote-small"><strong>Carga</strong><span>Gestión documental</span><b>US$45.00</b></div>
+          </div>
+        </section>
+
+        <section id="plans" class="marketing-section">
+          <div class="section-heading">
+            <span class="eyebrow">Planes</span>
+            <h2>Empieza simple y escala cuando tengas más volumen.</h2>
+          </div>
+          <div class="grid cols-3">
+            <div class="plan-card card"><div class="plan-topline">Starter</div><div class="plan-price">US$9<span>/mes</span></div><p>Hasta 50 cotizaciones mensuales. Ideal para negocios pequeños.</p><button class="btn primary" data-route="auth">Comenzar</button></div>
+            <div class="plan-card card"><div class="plan-topline">Enterprise</div><div class="plan-price">US$39<span>/mes</span></div><p>Hasta 500 cotizaciones mensuales, catálogo amplio y seguimiento comercial.</p><button class="btn primary" data-route="auth">Comenzar</button></div>
+            <div class="plan-card card"><div class="plan-topline">A cotizar</div><div class="plan-price">Personalizado</div><p>Para empresas con alto volumen, múltiples usuarios o integraciones específicas.</p><a class="btn secondary" href="mailto:${escapeHtml(config.salesEmail || 'ventas@cotizaflow.app')}">Contactar</a></div>
+          </div>
+        </section>
+
+        <section class="marketing-section testimonials">
+          <div class="section-heading">
+            <span class="eyebrow">Comentarios de usuarios</span>
+            <h2>Opiniones de prueba para validar la propuesta.</h2>
+          </div>
+          <div class="grid cols-3">
+            <div class="testimonial-card"><p>“Me permite mandar una cotización clara por WhatsApp sin volver a Excel.”</p><strong>Dueño de taller</strong></div>
+            <div class="testimonial-card"><p>“El seguimiento me dice exactamente a quién escribirle primero.”</p><strong>Instalador CCTV</strong></div>
+            <div class="testimonial-card"><p>“El catálogo acelera mucho los servicios que se repiten todas las semanas.”</p><strong>Suplidor local</strong></div>
+          </div>
+        </section>
+
+        <section id="contact" class="marketing-section footer-section">
+          <div>
+            <h2>CotizaFlow</h2>
+            <p>Sistema de cotizaciones, seguimiento comercial y CRM ligero para negocios de servicios.</p>
+          </div>
+          <div class="footer-links">
+            <button class="link-button" data-scroll-target="plans">Planes</button>
+            <a href="mailto:${escapeHtml(config.salesEmail || 'ventas@cotizaflow.app')}">Contacto</a>
+            <button class="link-button" data-scroll-target="terms">Términos</button>
+            <button class="link-button" data-scroll-target="privacy">Privacidad</button>
+            <button class="link-button" data-scroll-target="support">Soporte</button>
+          </div>
+          <div id="terms" class="legal-copy"><span id="privacy"></span><span id="support"></span>
+            <strong>Términos y condiciones.</strong> CotizaFlow es una herramienta de gestión de cotizaciones. El usuario es responsable de validar precios, impuestos, vigencias, términos comerciales y cumplimiento legal de sus propuestas.
+            <br><br><strong>Privacidad.</strong> Los datos se usan para operar la cuenta, generar cotizaciones y registrar actividad comercial. No se debe almacenar información sensible innecesaria de clientes.
+            <br><br><strong>Soporte.</strong> Para consultas comerciales o soporte, usa el correo configurado de ventas/contacto.
+          </div>
         </section>
       </div>
+
+      ${showAuth ? `
+        <div class="auth-modal-backdrop" data-route="home">
+          <section class="login-box auth-modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+              <div><h2>Acceso a CotizaFlow</h2><p>Inicia sesión o crea tu cuenta para continuar.</p></div>
+              <button class="btn ghost small" data-route="home">Cerrar</button>
+            </div>
+            ${renderAuthBox()}
+          </section>
+        </div>
+      ` : ''}
     </main>
   `;
 }
-
 function renderAuthBox() {
   const disabled = mode !== 'supabase';
   return `
@@ -699,13 +807,10 @@ function renderApp(route) {
           ${navLink('quotes', 'Cotizaciones')}
           ${navLink('quote-new', 'Nueva cotización')}
           ${navLink('reports', 'Seguimiento')}
-          ${navLink('clients', 'Clientes')}
+          ${navLink('clients', 'CRM clientes')}
           ${navLink('catalog', 'Catálogo')}
           ${navLink('templates', 'Plantillas')}
-          ${navLink('settings', 'Empresa')}
-          ${navLink('billing', 'Planes y pagos')}
-          ${navLink('affiliates', 'Referidos')}
-          ${navLink('integrations', 'Integraciones')}
+          ${navLink('settings', 'Configuración')}
         </nav>
         <div class="sidebar-footer">
           <strong>${escapeHtml(state.company?.name || 'Mi empresa')}</strong><br />
@@ -1259,50 +1364,182 @@ function renderQuotesTable(quotes, compact = false) {
   `;
 }
 
+
+function clientStatusLabel(value) {
+  return {
+    lead: 'Prospecto',
+    active: 'Activo',
+    inactive: 'Inactivo',
+    priority: 'Prioritario',
+    lost: 'Perdido'
+  }[String(value || 'lead')] || 'Prospecto';
+}
+
+function clientStatusOptions(selected = 'lead') {
+  return [
+    ['lead', 'Prospecto'],
+    ['active', 'Activo'],
+    ['priority', 'Prioritario'],
+    ['inactive', 'Inactivo'],
+    ['lost', 'Perdido']
+  ].map(([value, label]) => `<option value="${value}" ${String(selected || 'lead') === value ? 'selected' : ''}>${label}</option>`).join('');
+}
+
+function quoteCreatedTime(quote) {
+  const d = safeDate(quote.created_at);
+  return d ? d.getTime() : 0;
+}
+
+function getClientQuotes(clientId) {
+  return (state.quotes || []).filter(q => q.client_id === clientId);
+}
+
+function getClientLastFollowup(clientId) {
+  const quoteIds = new Set(getClientQuotes(clientId).map(q => q.id));
+  const events = (state.quoteEvents || []).filter(e => quoteIds.has(e.quote_id) && ['manual_followup','whatsapp_opened','whatsapp_copied','commented','accepted','rejected'].includes(e.event_type));
+  return events.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0] || null;
+}
+
+function getClientStats(client) {
+  const quotes = getClientQuotes(client.id);
+  const totalQuoted = quotes.reduce((sum, q) => sum + quoteTotals(q).total, 0);
+  const accepted = quotes.filter(q => q.status === 'accepted');
+  const totalAccepted = accepted.reduce((sum, q) => sum + quoteTotals(q).total, 0);
+  const pending = quotes.filter(q => ['draft','sent'].includes(q.status));
+  const expired = quotes.filter(q => isQuoteExpired(q));
+  const lastQuote = [...quotes].sort((a, b) => quoteCreatedTime(b) - quoteCreatedTime(a))[0] || null;
+  const lastFollowup = getClientLastFollowup(client.id);
+  const lastActivityAt = lastFollowup?.created_at || lastQuote?.updated_at || lastQuote?.created_at || client.updated_at || client.created_at;
+  return { quotes, totalQuoted, accepted, totalAccepted, pending, expired, lastQuote, lastFollowup, lastActivityAt };
+}
+
+function getFilteredClients() {
+  const filters = state.clientFilters || { status: 'all', search: '' };
+  const search = String(filters.search || '').trim().toLowerCase();
+  return (state.clients || []).filter(client => {
+    const status = String(client.commercial_status || (client.is_active === false ? 'inactive' : 'lead'));
+    if (filters.status && filters.status !== 'all' && status !== filters.status) return false;
+    if (!search) return true;
+    const blob = [client.name, client.email, client.phone, client.address, client.tags, client.notes].join(' ').toLowerCase();
+    return blob.includes(search);
+  });
+}
+
+function renderClientFilters() {
+  const filters = state.clientFilters || { status: 'all', search: '' };
+  return `
+    <form data-form="client-filters" class="form-grid three">
+      <div class="field"><label>Buscar</label><input name="search" value="${escapeHtml(filters.search || '')}" placeholder="Nombre, teléfono, etiqueta..." /></div>
+      <div class="field"><label>Estado comercial</label>
+        <select name="status">
+          <option value="all" ${filters.status === 'all' ? 'selected' : ''}>Todos</option>
+          ${clientStatusOptions(filters.status).replace(/<option value="lead"/, '<option value="lead"')}
+        </select>
+      </div>
+      <div class="field" style="align-self:end;"><button class="btn primary" type="submit">Filtrar clientes</button></div>
+    </form>
+  `;
+}
+
 function renderClients() {
+  const clients = getFilteredClients();
+  const all = state.clients || [];
+  const totals = all.reduce((acc, client) => {
+    const stats = getClientStats(client);
+    acc.totalQuoted += stats.totalQuoted;
+    acc.totalAccepted += stats.totalAccepted;
+    if (stats.pending.length) acc.withPending += 1;
+    if (stats.expired.length) acc.withExpired += 1;
+    return acc;
+  }, { totalQuoted: 0, totalAccepted: 0, withPending: 0, withExpired: 0 });
+
   return `
     <div class="page-header">
       <div>
-        <h1>Clientes</h1>
-        <p>Base comercial simple para crear cotizaciones rápido.</p>
+        <h1>CRM de clientes</h1>
+        <p>Ficha comercial, historial de cotizaciones, montos aceptados y próxima acción por cliente.</p>
       </div>
+      <button class="btn secondary" data-route="quote-new">Nueva cotización</button>
     </div>
 
-    <section class="grid cols-2">
+    <section class="grid cols-4">
+      <div class="card metric"><span>Clientes</span><strong>${all.length}</strong></div>
+      <div class="card metric"><span>Total cotizado</span><strong>${money(totals.totalQuoted)}</strong></div>
+      <div class="card metric"><span>Total aceptado</span><strong>${money(totals.totalAccepted)}</strong></div>
+      <div class="card metric"><span>Con vencidas</span><strong>${totals.withExpired}</strong></div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px;">
       <div class="card">
         <h2>Nuevo cliente</h2>
-        <form data-form="client" class="form-grid">
+        <form data-form="client" class="form-grid two">
           <div class="field"><label>Nombre</label><input name="name" required placeholder="Cliente o empresa" /></div>
+          <div class="field"><label>Estado comercial</label><select name="commercial_status">${clientStatusOptions('lead')}</select></div>
           <div class="field"><label>Correo</label><input name="email" type="email" placeholder="cliente@email.com" /></div>
           <div class="field"><label>Teléfono</label><input name="phone" placeholder="809-000-0000" /></div>
-          <div class="field"><label>Dirección</label><textarea name="address" placeholder="Dirección comercial"></textarea></div>
+          <div class="field" style="grid-column:1/-1;"><label>Etiquetas</label><input name="tags" placeholder="prioridad, taller, recurrente" /></div>
+          <div class="field" style="grid-column:1/-1;"><label>Dirección</label><textarea name="address" placeholder="Dirección comercial"></textarea></div>
+          <div class="field" style="grid-column:1/-1;"><label>Notas internas</label><textarea name="notes" placeholder="Preferencias, acuerdos, observaciones"></textarea></div>
           <button class="btn primary" type="submit">Guardar cliente</button>
         </form>
       </div>
 
       <div class="card">
-        <h2>Lista de clientes</h2>
-        ${state.clients.length ? `
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Cliente</th><th>Contacto</th><th>Acciones</th></tr></thead>
-              <tbody>
-                ${state.clients.map(client => `
-                  <tr>
-                    <td><strong>${escapeHtml(client.name)}</strong><br><span class="help">${escapeHtml(client.address || '')}</span></td>
-                    <td>${escapeHtml(client.email || '')}<br><span class="help">${escapeHtml(client.phone || '')}</span></td>
-                    <td><button class="btn danger small" data-action="delete-client" data-id="${client.id}">Borrar</button></td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        ` : `<div class="empty">Todavía no tienes clientes.</div>`}
+        <h2>Filtros comerciales</h2>
+        ${renderClientFilters()}
+        <div class="notice" style="margin-top:14px;">Usa etiquetas y estado comercial para priorizar seguimiento. El historial se calcula automáticamente desde las cotizaciones y eventos registrados.</div>
       </div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Clientes</h2>
+      ${clients.length ? renderClientCrmTable(clients) : `<div class="empty">No hay clientes para los filtros seleccionados.</div>`}
     </section>
   `;
 }
 
+function renderClientCrmTable(clients) {
+  return `
+    <div class="table-wrap crm-table">
+      <table>
+        <thead><tr><th>Cliente</th><th>Estado</th><th>Historial</th><th>Última actividad</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${clients.map(client => {
+            const stats = getClientStats(client);
+            const tags = String(client.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+            return `
+              <tr>
+                <td>
+                  <strong>${escapeHtml(client.name)}</strong><br>
+                  <span class="help">${escapeHtml(client.email || '')} ${client.phone ? '· ' + escapeHtml(client.phone) : ''}</span><br>
+                  ${tags.length ? `<div class="tag-row">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+                  ${client.notes ? `<p class="help">${escapeHtml(client.notes)}</p>` : ''}
+                </td>
+                <td><span class="badge ${escapeHtml(client.commercial_status || 'draft')}">${escapeHtml(clientStatusLabel(client.commercial_status))}</span></td>
+                <td>
+                  <strong>${stats.quotes.length}</strong> cotizaciones<br>
+                  <span class="help">Cotizado: ${money(stats.totalQuoted)} · Aceptado: ${money(stats.totalAccepted)}</span><br>
+                  <span class="help">Pendientes: ${stats.pending.length} · Vencidas: ${stats.expired.length}</span>
+                </td>
+                <td>
+                  ${stats.lastQuote ? `<strong>${escapeHtml(stats.lastQuote.quote_number)}</strong><br><span class="help">Última cotización: ${escapeHtml(formatDateTime(stats.lastQuote.created_at))}</span>` : '<span class="help">Sin cotizaciones</span>'}
+                  ${stats.lastFollowup ? `<br><span class="help">Seguimiento: ${escapeHtml(formatDateTime(stats.lastFollowup.created_at))}</span>` : ''}
+                </td>
+                <td>
+                  <div class="actions">
+                    <button class="btn secondary small" data-route="quote-new" data-prefill-client="${client.id}">Cotizar</button>
+                    ${stats.lastQuote ? `<button class="btn secondary small" data-route="quote-view/${stats.lastQuote.id}">Ver última</button>` : ''}
+                    <button class="btn danger small" data-action="delete-client" data-id="${client.id}">Borrar</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
 
 const BUSINESS_TYPES = [
   ['general', 'General / servicios'],
@@ -1488,17 +1725,30 @@ function renderMessageTemplatesTable(templates) {
   `;
 }
 
+function renderLogoPreview(c) {
+  if (!c.logo_data_url) return `<div class="logo-preview empty-logo">Sin logo</div>`;
+  return `<div class="logo-preview"><img src="${escapeHtml(c.logo_data_url)}" alt="Logo empresa" /></div>`;
+}
+
 function renderSettings() {
   const c = state.company || defaultCompany;
   return `
     <div class="page-header">
       <div>
-        <h1>Empresa</h1>
-        <p>Estos datos salen en tus cotizaciones y PDF.</p>
+        <h1>Configuración</h1>
+        <p>Administra empresa, planes y pagos, referidos e integraciones desde un solo lugar.</p>
       </div>
     </div>
 
-    <section class="card">
+    <section class="grid cols-4 config-grid">
+      <button class="card config-card active" data-route="settings"><strong>Empresa</strong><span>Datos fiscales, logo, formato de cotización</span></button>
+      <button class="card config-card" data-route="billing"><strong>Planes y pagos</strong><span>Suscripción, límites y checkout</span></button>
+      <button class="card config-card" data-route="affiliates"><strong>Referidos</strong><span>Código, comisiones y enlace</span></button>
+      <button class="card config-card" data-route="integrations"><strong>Integraciones</strong><span>Estado técnico y próximos conectores</span></button>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Empresa</h2>
       <form data-form="company" class="form-grid two">
         <div class="field"><label>Nombre empresa</label><input name="name" value="${escapeHtml(c.name)}" required /></div>
         <div class="field"><label>RNC / Documento</label><input name="tax_id" value="${escapeHtml(c.tax_id)}" /></div>
@@ -1515,14 +1765,56 @@ function renderSettings() {
             ${businessTypeOptions(c.business_type)}
           </select>
         </div>
+        <div class="field"><label>Posición del logo en cotización</label>
+          <select name="logo_position">
+            ${[['left','Superior izquierda'], ['center','Superior centro'], ['right','Superior derecha']].map(([value, label]) => `<option value="${value}" ${String(c.logo_position || 'right') === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="grid-column:1/-1;"><label>Logo de empresa</label>
+          <div class="logo-upload-row">
+            ${renderLogoPreview(c)}
+            <div>
+              <input type="file" accept="image/*" data-logo-input />
+              <input type="hidden" name="logo_data_url" value="${escapeHtml(c.logo_data_url || '')}" />
+              <p class="help">Se guarda como imagen base64 para usarla en la vista de cotización y PDF. Recomendado: PNG/JPG horizontal, menos de 500 KB.</p>
+              ${c.logo_data_url ? `<button class="btn secondary small" type="button" data-action="clear-logo">Quitar logo</button>` : ''}
+            </div>
+          </div>
+        </div>
         <div class="field" style="grid-column:1/-1;"><label>Dirección</label><textarea name="address">${escapeHtml(c.address)}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en cotizaciones</label><textarea name="default_quote_notes">${escapeHtml(c.default_quote_notes || defaultCompany.default_quote_notes)}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Términos y condiciones por defecto</label><textarea name="default_terms" placeholder="Opcional">${escapeHtml(c.default_terms || '')}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Mensaje WhatsApp por defecto</label><textarea name="default_whatsapp_template" placeholder="Usa variables: {{client_name}}, {{quote_number}}, {{quote_total}}, {{public_link}}, {{company_name}}">${escapeHtml(c.default_whatsapp_template || '')}</textarea></div>
-        <button class="btn primary" type="submit">Guardar empresa</button>
+        <button class="btn primary" type="submit">Guardar configuración</button>
       </form>
     </section>
   `;
+}
+
+function renderCompanyQuoteHeader(quote = null) {
+  const c = state.company || defaultCompany;
+  const position = String(c.logo_position || 'right');
+  const logo = c.logo_data_url ? `<img class="quote-company-logo ${escapeHtml(position)}" src="${escapeHtml(c.logo_data_url)}" alt="Logo ${escapeHtml(c.name || '')}" />` : '';
+  const companyBlock = `
+    <div class="quote-company-info">
+      <h2>${escapeHtml(c.name || '')}</h2>
+      <p class="help">${escapeHtml(c.tax_id || '')} · ${escapeHtml(c.email || '')} · ${escapeHtml(c.phone || '')}</p>
+      ${c.address ? `<p class="help">${escapeHtml(c.address)}</p>` : ''}
+    </div>`;
+  const quoteBlock = quote ? `
+    <div class="quote-number-block">
+      <h3>Cotización</h3>
+      <strong>${escapeHtml(quote.quote_number || '')}</strong><br>
+      <span class="help">Válida hasta ${escapeHtml(quote.valid_until || '')}</span>
+    </div>` : '';
+
+  if (position === 'center') {
+    return `<div class="quote-brand-header center-logo">${logo}${companyBlock}${quoteBlock}</div>`;
+  }
+  if (position === 'left') {
+    return `<div class="quote-brand-header left-logo"><div class="brand-side">${logo}${companyBlock}</div>${quoteBlock}</div>`;
+  }
+  return `<div class="quote-brand-header right-logo"><div>${companyBlock}</div><div class="brand-side right">${quoteBlock}${logo}</div></div>`;
 }
 
 function renderQuoteForm(id) {
@@ -1531,7 +1823,7 @@ function renderQuoteForm(id) {
   const current = quote || {
     id: '',
     quote_number: nextQuoteNumber(),
-    client_id: state.clients[0]?.id || '',
+    client_id: state.prefillClientId || state.clients[0]?.id || '',
     status: 'draft',
     currency: state.company?.currency || 'USD',
     tax_rate: state.company?.tax_rate || 0,
@@ -1639,17 +1931,7 @@ function renderQuoteView(id) {
     </div>
 
     <section class="card printable-quote">
-      <div class="quote-preview-header">
-        <div>
-          <h2>${escapeHtml(state.company?.name || '')}</h2>
-          <p class="help">${escapeHtml(state.company?.tax_id || '')} · ${escapeHtml(state.company?.email || '')} · ${escapeHtml(state.company?.phone || '')}</p>
-        </div>
-        <div style="text-align:right;">
-          <h3>Cotización</h3>
-          <strong>${escapeHtml(quote.quote_number)}</strong><br>
-          <span class="help">Válida hasta ${escapeHtml(quote.valid_until || '')}</span>
-        </div>
-      </div>
+      ${renderCompanyQuoteHeader(quote)}
 
       <div class="grid cols-2" style="margin-top:18px;">
         <div>
@@ -2000,7 +2282,9 @@ async function saveCompany(form) {
     business_type: String(fd.get('business_type') || 'general').trim(),
     default_quote_notes: String(fd.get('default_quote_notes') || '').trim(),
     default_terms: String(fd.get('default_terms') || '').trim(),
-    default_whatsapp_template: String(fd.get('default_whatsapp_template') || '').trim()
+    default_whatsapp_template: String(fd.get('default_whatsapp_template') || '').trim(),
+    logo_data_url: String(fd.get('logo_data_url') || '').trim(),
+    logo_position: ['left','center','right'].includes(String(fd.get('logo_position') || 'right')) ? String(fd.get('logo_position') || 'right') : 'right'
   };
 
   if (mode === 'supabase') {
@@ -2027,7 +2311,11 @@ async function saveClient(form) {
     name: String(fd.get('name') || '').trim(),
     email: String(fd.get('email') || '').trim(),
     phone: String(fd.get('phone') || '').trim(),
-    address: String(fd.get('address') || '').trim()
+    address: String(fd.get('address') || '').trim(),
+    notes: String(fd.get('notes') || '').trim(),
+    tags: String(fd.get('tags') || '').trim(),
+    commercial_status: String(fd.get('commercial_status') || 'lead').trim(),
+    is_active: true
   };
 
   if (mode === 'supabase') {
@@ -2368,7 +2656,23 @@ function addCatalogItemToQuote() {
   const total = quantity * unit_price;
   const container = document.getElementById('items');
   if (!container) return;
-  container.insertAdjacentHTML('beforeend', renderItemRow({ description, quantity, unit_price, total }));
+
+  const emptyRow = [...container.querySelectorAll('[data-item-row]')].find(row => {
+    const desc = row.querySelector('[name="item_description"]')?.value.trim();
+    const qty = Number(row.querySelector('[name="item_quantity"]')?.value || 0);
+    const price = Number(row.querySelector('[name="item_unit_price"]')?.value || 0);
+    return !desc && (qty === 0 || qty === 1) && price === 0;
+  });
+
+  if (emptyRow) {
+    emptyRow.querySelector('[name="item_description"]').value = description;
+    emptyRow.querySelector('[name="item_quantity"]').value = quantity;
+    emptyRow.querySelector('[name="item_unit_price"]').value = unit_price;
+    emptyRow.querySelector('[name="item_total"]').value = total.toFixed(2);
+  } else {
+    container.insertAdjacentHTML('beforeend', renderItemRow({ description, quantity, unit_price, total }));
+  }
+
   recalcQuoteForm();
   select.value = '';
   toast('Item agregado desde catálogo.');
@@ -2523,28 +2827,50 @@ function generatePdf(id) {
   const totals = quoteTotals(quote);
   const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
   const left = 44;
+  const right = 568;
+  const company = state.company || defaultCompany;
+  const logoPosition = String(company.logo_position || 'right');
   let y = 48;
+
+  if (company.logo_data_url) {
+    try {
+      const logoW = 82;
+      const logoH = 48;
+      const logoX = logoPosition === 'left' ? left : logoPosition === 'center' ? 265 : right - logoW;
+      doc.addImage(company.logo_data_url, undefined, logoX, 36, logoW, logoH);
+      if (logoPosition === 'center') y = 104;
+    } catch (error) {
+      console.warn('No se pudo colocar el logo en el PDF:', error);
+    }
+  }
+
+  const companyX = logoPosition === 'left' && company.logo_data_url ? 140 : left;
+  const quoteX = 420;
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(18);
-  doc.text(state.company?.name || 'CotizaFlow', left, y);
+  doc.text(company.name || 'CotizaFlow', companyX, y);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   y += 16;
-  doc.text(`${state.company?.tax_id || ''}  ${state.company?.email || ''}  ${state.company?.phone || ''}`, left, y);
+  doc.text(`${company.tax_id || ''}  ${company.email || ''}  ${company.phone || ''}`, companyX, y);
+  if (company.address) {
+    y += 13;
+    doc.text(doc.splitTextToSize(company.address, 300), companyX, y);
+  }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
-  doc.text('COTIZACIÓN', 420, 48);
+  doc.text('COTIZACIÓN', quoteX, 48);
   doc.setFontSize(10);
-  doc.text(quote.quote_number || '', 420, 65);
+  doc.text(quote.quote_number || '', quoteX, 65);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Estado: ${statusLabel(quote.status)}`, 420, 82);
-  doc.text(`Válida hasta: ${quote.valid_until || ''}`, 420, 99);
+  doc.text(`Estado: ${statusLabel(quote.status)}`, quoteX, 82);
+  doc.text(`Válida hasta: ${quote.valid_until || ''}`, quoteX, 99);
 
   y = 124;
   doc.setDrawColor(220);
-  doc.line(left, y, 568, y);
+  doc.line(left, y, right, y);
   y += 28;
 
   doc.setFont('helvetica', 'bold');
@@ -2565,7 +2891,7 @@ function generatePdf(id) {
   doc.text('Precio', 410, y);
   doc.text('Total', 500, y);
   y += 8;
-  doc.line(left, y, 568, y);
+  doc.line(left, y, right, y);
   y += 18;
 
   doc.setFont('helvetica', 'normal');
@@ -2583,7 +2909,7 @@ function generatePdf(id) {
   });
 
   y += 8;
-  doc.line(360, y, 568, y);
+  doc.line(360, y, right, y);
   y += 18;
   doc.text('Subtotal', 410, y);
   doc.text(money(totals.subtotal), 500, y);
@@ -2595,15 +2921,17 @@ function generatePdf(id) {
   doc.text('Total', 410, y);
   doc.text(money(totals.total), 500, y);
 
-  y += 34;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  const notes = doc.splitTextToSize(quote.notes || '', 500);
-  doc.text(notes, left, y);
+  const footerText = [quote.notes || '', company.default_terms ? `Términos: ${company.default_terms}` : ''].filter(Boolean).join('\n\n');
+  if (footerText) {
+    y += 34;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    const notes = doc.splitTextToSize(footerText, 500);
+    doc.text(notes, left, y);
+  }
 
   doc.save(`${quote.quote_number || 'cotizacion'}.pdf`);
 }
-
 
 async function startCheckout(planKey) {
   if (planKey === 'custom') {
@@ -2651,6 +2979,56 @@ async function copyAffiliateLink() {
 }
 
 
+
+function handleClientFilters(form) {
+  const fd = new FormData(form);
+  state.clientFilters = {
+    search: String(fd.get('search') || '').trim(),
+    status: String(fd.get('status') || 'all')
+  };
+  saveLocalState();
+  setRoute('clients');
+  render();
+}
+
+function clearCompanyLogo() {
+  const form = document.querySelector('[data-form="company"]');
+  const hidden = form?.querySelector('[name="logo_data_url"]');
+  if (hidden) hidden.value = '';
+  state.company = { ...state.company, logo_data_url: '' };
+  if (mode === 'local') saveLocalState();
+  render();
+}
+
+function handleLogoFileInput(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    toast('Selecciona una imagen válida.');
+    return;
+  }
+  if (file.size > 900 * 1024) {
+    toast('El logo está muy pesado. Usa una imagen menor a 900 KB.');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result || '');
+    const form = input.closest('[data-form="company"]');
+    const hidden = form?.querySelector('[name="logo_data_url"]');
+    if (hidden) hidden.value = dataUrl;
+    const preview = form?.querySelector('.logo-preview');
+    if (preview) preview.innerHTML = `<img src="${dataUrl}" alt="Logo empresa" />`;
+    toast('Logo cargado. Presiona Guardar configuración.');
+  };
+  reader.readAsDataURL(file);
+}
+
+function restoreVisibleApp() {
+  if (state.loading) return;
+  if (!app.innerHTML.trim()) render();
+}
+
 function handleReportFilters(form) {
   const fd = new FormData(form);
   state.reportFilters = {
@@ -2664,11 +3042,18 @@ function handleReportFilters(form) {
 }
 
 app.addEventListener('click', async (event) => {
+  const scrollTarget = event.target.closest('[data-scroll-target]')?.dataset.scrollTarget;
+  if (scrollTarget) {
+    document.getElementById(scrollTarget)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
   const route = event.target.closest('[data-route]')?.dataset.route;
   const actionEl = event.target.closest('[data-action]');
   const authTab = event.target.closest('[data-auth-tab]')?.dataset.authTab;
 
   if (route) {
+    const prefillClient = event.target.closest('[data-prefill-client]')?.dataset.prefillClient || '';
+    state.prefillClientId = route === 'quote-new' ? prefillClient : '';
     setRoute(route);
     render();
     return;
@@ -2705,6 +3090,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'delete-product-service') await deleteProductService(id);
     if (action === 'seed-catalog') await seedCatalogForBusinessType();
     if (action === 'delete-message-template') await deleteMessageTemplate(id);
+    if (action === 'clear-logo') clearCompanyLogo();
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
   } catch (error) {
     console.error(error);
@@ -2725,6 +3111,7 @@ app.addEventListener('submit', async (event) => {
     if (type === 'product-service') await saveProductService(form);
     if (type === 'message-template') await saveMessageTemplate(form);
     if (type === 'report-filters') handleReportFilters(form);
+    if (type === 'client-filters') handleClientFilters(form);
   } catch (error) {
     console.error(error);
     toast(error.message || 'No se pudo guardar.');
@@ -2735,4 +3122,12 @@ app.addEventListener('input', (event) => {
   if (event.target.closest('[data-form="quote"]')) recalcQuoteForm();
 });
 
+app.addEventListener('change', (event) => {
+  if (event.target.matches('[data-logo-input]')) handleLogoFileInput(event.target);
+});
+
 window.addEventListener('hashchange', render);
+window.addEventListener('pageshow', restoreVisibleApp);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') restoreVisibleApp();
+});

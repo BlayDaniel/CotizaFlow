@@ -71,6 +71,28 @@
         </main>`;
     }
 
+
+    function renderPublicQuoteHeader(company, quote) {
+      const position = String(company?.logo_position || 'right');
+      const logo = company?.logo_data_url ? `<img class="quote-company-logo ${escapeHtml(position)}" src="${escapeHtml(company.logo_data_url)}" alt="Logo ${escapeHtml(company?.name || '')}" />` : '';
+      const companyBlock = `
+        <div class="quote-company-info">
+          <h2>${escapeHtml(company?.name || '')}</h2>
+          <p class="help">${escapeHtml(company?.tax_id || '')} · ${escapeHtml(company?.email || '')} · ${escapeHtml(company?.phone || '')}</p>
+          <p class="help">${escapeHtml(company?.address || '')}</p>
+        </div>`;
+      const quoteBlock = `
+        <div class="quote-number-block">
+          <h3>Cotización</h3>
+          <strong>${escapeHtml(quote.quote_number)}</strong><br>
+          <span class="badge ${escapeHtml(quote.status)}">${escapeHtml(statusLabel(quote.status))}</span><br>
+          <span class="help">Válida hasta ${escapeHtml(quote.valid_until || '')}</span>
+        </div>`;
+      if (position === 'center') return `<div class="quote-brand-header center-logo">${logo}${companyBlock}${quoteBlock}</div>`;
+      if (position === 'left') return `<div class="quote-brand-header left-logo"><div class="brand-side">${logo}${companyBlock}</div>${quoteBlock}</div>`;
+      return `<div class="quote-brand-header right-logo"><div>${companyBlock}</div><div class="brand-side right">${quoteBlock}${logo}</div></div>`;
+    }
+
     function renderQuote(payload) {
       currentPayload = payload;
       const { quote, company, client } = payload;
@@ -87,19 +109,7 @@
             </header>
 
             <section class="card printable-quote">
-              <div class="quote-preview-header">
-                <div>
-                  <h2>${escapeHtml(company?.name || '')}</h2>
-                  <p class="help">${escapeHtml(company?.tax_id || '')} · ${escapeHtml(company?.email || '')} · ${escapeHtml(company?.phone || '')}</p>
-                  <p class="help">${escapeHtml(company?.address || '')}</p>
-                </div>
-                <div style="text-align:right;">
-                  <h3>Cotización</h3>
-                  <strong>${escapeHtml(quote.quote_number)}</strong><br>
-                  <span class="badge ${escapeHtml(quote.status)}">${escapeHtml(statusLabel(quote.status))}</span><br>
-                  <span class="help">Válida hasta ${escapeHtml(quote.valid_until || '')}</span>
-                </div>
-              </div>
+              ${renderPublicQuoteHeader(company, quote)}
 
               <div class="grid cols-2" style="margin-top:18px;">
                 <div>
