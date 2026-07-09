@@ -1,6 +1,6 @@
-# CotizaFlow — Fase 7
+# CotizaFlow — Fase 8C
 
-Fase 7 agrega CRM ligero de clientes y mejoras comerciales/UX sobre la Fase 6.
+Fase 8C mantiene las mejoras comerciales de Fase 7 y agrega idiomas, temas y Control Diario ganadero conectado al CRM.
 
 ## Incluye
 
@@ -35,19 +35,33 @@ supabase functions deploy get-public-quote
 - `app.js`
 - `styles.css`
 - `public.html`
-- `supabase/schema_phase7.sql`
-- `supabase/functions/get-public-quote/index.ts`
+- `supabase/schema_phase8_dairy.sql`
+- `supabase/schema_phase8b_dairy_crm_settings.sql`
 
-## Fase 8 - Idiomas, temas y control ganadero
+## Fase 8C - Ajustes UX, dashboard ganadero y configuración más limpia
 
 Cambios incluidos:
 - Selector de idioma en la parte superior: Español / Inglés.
 - Tema visual en Configuración > Empresa: White / Black.
 - Navegación interna en Configuración para Empresa, Planes y pagos, Referidos e Integraciones.
 - Nuevo tipo de negocio: Asociación Ganaderos.
-- Nuevo módulo Control leche para registrar litros diarios por productor, comisión, neto a pagar, resumen mensual, PDF mensual y CSV.
+- Nuevo módulo Control Diario debajo de Dashboard para registrar litros diarios por productor, comisión, neto a pagar, resumen mensual, PDF mensual y CSV.
+- Productores conectados al CRM de clientes: puedes seleccionar un cliente existente o crear uno nuevo automáticamente desde Control Diario.
+- El historial de leche aparece también dentro del CRM de clientes.
+- Precio por litro y % comisión se configuran en Configuración > Empresa y se aplican automáticamente en cada registro.
 
 Persistencia del control de leche:
 - Si existe la tabla `milk_deliveries`, el módulo guarda en Supabase.
 - Si la tabla no existe, el módulo funciona en localStorage para no romper la app.
-- Para activar persistencia real, ejecuta `supabase/schema_phase8_dairy.sql` en Supabase SQL Editor.
+- Para activar persistencia real, ejecuta `supabase/schema_phase8_dairy.sql` o `supabase/schema_phase8b_dairy_crm_settings.sql` en Supabase SQL Editor.
+- La migración agrega `default_milk_price_per_liter` y `default_milk_commission_rate` a `companies`, y `client_id` a `milk_deliveries`.
+
+
+## Fase 8C - Cambios adicionales
+
+- Corrección visual de selects e inputs dentro de formularios en grillas: ya no se estiran cuando otro campo de la misma fila tiene texto de ayuda.
+- En el menú lateral se eliminó la entrada directa de Nueva cotización. La creación queda concentrada en el módulo Cotizaciones.
+- Seguimiento se movió debajo de Dashboard para organizar mejor la navegación.
+- Precio por litro de leche y % comisión asociación solo se muestran en Configuración > Empresa cuando el tipo de negocio es Asociación Ganaderos.
+- El Dashboard cambia a una vista ganadera cuando la empresa es Asociación Ganaderos, con litros de hoy, litros del mes, neto a pagar, comisión, productores activos, promedio diario, alertas y últimos registros.
+- Uso mensual del plan quedó concentrado en Configuración > Planes y pagos.

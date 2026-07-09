@@ -5,6 +5,7 @@ const REFERRAL_STORAGE_KEY = 'cotizaflow_pending_referral_code_v1';
 const QUOTE_DRAFT_STORAGE_KEY = 'cotizaflow_quote_form_draft_v1';
 const PREFERENCES_STORAGE_KEY = 'cotizaflow_preferences_v1';
 const MILK_RECORDS_STORAGE_KEY = 'cotizaflow_milk_records_v1';
+const DAIRY_SETTINGS_STORAGE_KEY = 'cotizaflow_dairy_settings_v1';
 
 const PLAN_CATALOG = {
   free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, catalogLimit: 10, description: 'Prueba limitada para validar el producto.' },
@@ -36,6 +37,7 @@ let state = {
   milkRecords: [],
   milkStorageMode: 'local',
   milkFilters: { month: currentMonthValue() },
+  prefillMilkClientId: '',
   preferences: loadPreferences(),
   pendingReferralCode: captureReferralCode(),
   reportFilters: { period: 'all', status: 'all', attention: 'all' },
@@ -60,7 +62,9 @@ const defaultCompany = {
   default_terms: '',
   default_whatsapp_template: '',
   logo_position: 'right',
-  theme_preference: 'white'
+  theme_preference: 'white',
+  default_milk_price_per_liter: 0,
+  default_milk_commission_rate: 0
 };
 
 const localDefaultState = {
@@ -81,6 +85,7 @@ const localDefaultState = {
   milkRecords: [],
   milkStorageMode: 'local',
   milkFilters: { month: currentMonthValue() },
+  prefillMilkClientId: '',
   preferences: loadPreferences(),
   reportFilters: { period: 'all', status: 'all', attention: 'all' },
   clientFilters: { status: 'all', search: '' }
@@ -108,13 +113,13 @@ const TRANSLATIONS = {
   es: {
     language: 'Idioma', spanish: 'Español', english: 'Inglés', dashboard: 'Dashboard', quotes: 'Cotizaciones',
     newQuote: 'Nueva cotización', followup: 'Seguimiento', clients: 'CRM clientes', catalog: 'Catálogo', templates: 'Plantillas',
-    settings: 'Configuración', milkControl: 'Control leche', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones',
+    settings: 'Configuración', milkControl: 'Control Diario', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones',
     back: 'Regresar', theme: 'Temas', white: 'White', black: 'Black', saveSettings: 'Guardar configuración'
   },
   en: {
     language: 'Language', spanish: 'Spanish', english: 'English', dashboard: 'Dashboard', quotes: 'Quotes',
     newQuote: 'New quote', followup: 'Follow-up', clients: 'Client CRM', catalog: 'Catalog', templates: 'Templates',
-    settings: 'Settings', milkControl: 'Milk control', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations',
+    settings: 'Settings', milkControl: 'Daily control', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations',
     back: 'Back', theme: 'Themes', white: 'White', black: 'Black', saveSettings: 'Save settings'
   }
 };
@@ -209,6 +214,51 @@ function saveMilkRecordsLocalFallback() {
   }
 }
 
+function dairySettingsFallbackKey() {
+  const userId = state.session?.id || 'local-user';
+  const companyId = state.company?.id || 'local-company';
+  return `${DAIRY_SETTINGS_STORAGE_KEY}:${userId}:${companyId}`;
+}
+
+function loadDairySettingsFallback() {
+  try {
+    return JSON.parse(localStorage.getItem(dairySettingsFallbackKey()) || '{}');
+  } catch (_error) {
+    return {};
+  }
+}
+
+function saveDairySettingsFallback(settings = {}) {
+  try {
+    localStorage.setItem(dairySettingsFallbackKey(), JSON.stringify(settings));
+  } catch (error) {
+    console.warn('No se pudo guardar la configuración ganadera local:', error);
+  }
+}
+
+function getDairyDefaults() {
+  const fallback = loadDairySettingsFallback();
+  const company = state.company || {};
+  return {
+    price_per_liter: Number(company.default_milk_price_per_liter ?? fallback.default_milk_price_per_liter ?? 0),
+    commission_rate: Number(company.default_milk_commission_rate ?? fallback.default_milk_commission_rate ?? 0)
+  };
+}
+
+function normalizeTextKey(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+}
+
+function milkClientRecords(client) {
+  if (!client) return [];
+  const clientId = String(client.id || '');
+  const clientName = normalizeTextKey(client.name);
+  return (state.milkRecords || []).filter(record => {
+    if (record.client_id && clientId && String(record.client_id) === clientId) return true;
+    return clientName && normalizeTextKey(record.producer_name) === clientName;
+  });
+}
+
 function normalizeMilkRecord(record = {}) {
   const liters = Number(record.liters || 0);
   const price = Number(record.price_per_liter || record.price || 0);
@@ -218,6 +268,7 @@ function normalizeMilkRecord(record = {}) {
   return {
     id: record.id || uid('milk'),
     company_id: record.company_id || state.company?.id || 'local-company',
+    client_id: record.client_id || record.producer_client_id || '',
     producer_name: String(record.producer_name || record.producer || '').trim(),
     delivery_date: String(record.delivery_date || record.date || todayISO()).slice(0, 10),
     liters,
@@ -1055,13 +1106,12 @@ function renderApp(route) {
         <div class="brand"><span class="brand-mark">C</span> CotizaFlow</div>
         <nav>
           ${navLink('dashboard', t('dashboard'))}
-          ${navLink('quotes', t('quotes'))}
-          ${navLink('quote-new', t('newQuote'))}
           ${navLink('reports', t('followup'))}
+          ${state.company?.business_type === 'asociacion_ganaderos' ? navLink('milk', t('milkControl')) : ''}
+          ${navLink('quotes', t('quotes'))}
           ${navLink('clients', t('clients'))}
           ${navLink('catalog', t('catalog'))}
           ${navLink('templates', t('templates'))}
-          ${state.company?.business_type === 'asociacion_ganaderos' ? navLink('milk', t('milkControl')) : ''}
           ${navLink('settings', t('settings'))}
         </nav>
         <div class="sidebar-footer">
@@ -1251,7 +1301,127 @@ function getTopServices(quotes = state.quotes) {
   return [...map.values()].map(row => ({ ...row, quotes: row.quotes.size })).sort((a, b) => b.total - a.total).slice(0, 8);
 }
 
+
+function getDairyDashboardStats(month = currentMonthValue()) {
+  const records = getMilkRecordsForMonth(month);
+  const summary = summarizeMilkByProducer(records);
+  const today = todayISO();
+  const todayRecords = records.filter(record => record.delivery_date === today);
+  const totals = records.reduce((acc, record) => {
+    acc.liters += Number(record.liters || 0);
+    acc.gross += Number(record.gross_amount || 0);
+    acc.commission += Number(record.commission_amount || 0);
+    acc.net += Number(record.net_amount || 0);
+    return acc;
+  }, { liters: 0, gross: 0, commission: 0, net: 0 });
+  const todayTotals = todayRecords.reduce((acc, record) => {
+    acc.liters += Number(record.liters || 0);
+    acc.net += Number(record.net_amount || 0);
+    return acc;
+  }, { liters: 0, net: 0 });
+  const uniqueDays = new Set(records.map(record => record.delivery_date).filter(Boolean));
+  const dairyClients = (state.clients || []).filter(client => {
+    const tags = normalizeTextKey([client.tags, client.notes].join(' '));
+    return tags.includes('ganadero') || tags.includes('productor leche') || milkClientRecords(client).length > 0;
+  });
+  const dairyDefaults = getDairyDefaults();
+  return {
+    month,
+    records,
+    summary,
+    totals,
+    todayRecords,
+    todayTotals,
+    uniqueDays: uniqueDays.size,
+    activeProducers: dairyClients.length || summary.length,
+    averageLitersPerDay: uniqueDays.size ? totals.liters / uniqueDays.size : 0,
+    dairyDefaults,
+    latestRecords: records.slice(0, 8),
+    pendingQuotes: getCommercialAnalytics().needsFollowup.length
+  };
+}
+
+function renderDairyDashboardAlerts(stats) {
+  const alerts = [];
+  if (Number(stats.dairyDefaults.price_per_liter || 0) <= 0) alerts.push({ type: 'warning', title: 'Precio por litro pendiente', detail: 'Configúralo en Configuración > Empresa para registrar llegadas sin cálculo manual.' });
+  if (!stats.todayRecords.length) alerts.push({ type: 'warning', title: 'Sin llegada registrada hoy', detail: 'Revisa si ya se recibió leche o si falta registrar la ruta del día.' });
+  if (!stats.summary.length) alerts.push({ type: 'info', title: 'Mes sin cierre iniciado', detail: 'Cuando registres llegadas, el sistema generará el glosario mensual por productor.' });
+  if (stats.pendingQuotes) alerts.push({ type: 'info', title: `${stats.pendingQuotes} cotización(es) requieren seguimiento`, detail: 'El módulo ganadero puede convivir con ventas y cotizaciones activas.' });
+  if (!alerts.length) alerts.push({ type: 'ok', title: 'Operación al día', detail: 'Hay registros para hoy y el cierre mensual tiene datos para liquidación.' });
+
+  return `
+    <div class="card">
+      <h2>Alertas operativas</h2>
+      <div class="insight-list">
+        ${alerts.slice(0, 4).map(alert => `
+          <div class="card insight ${alert.type}">
+            <strong>${escapeHtml(alert.title)}</strong>
+            <span>${escapeHtml(alert.detail)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderDairyDashboard() {
+  const stats = getDairyDashboardStats();
+  const topProducers = stats.summary.slice(0, 6);
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Dashboard ganadero</h1>
+        <p>Control mensual de llegada de leche, comisiones y pagos netos por productor.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn primary" data-route="milk">Registrar llegada</button>
+        <button class="btn secondary" data-route="clients">Ver productores</button>
+      </div>
+    </div>
+
+    <section class="grid cols-4 dairy-metrics">
+      <div class="card metric"><span>Litros de hoy</span><strong>${numberFmt(stats.todayTotals.liters, 2)}</strong></div>
+      <div class="card metric"><span>Litros del mes</span><strong>${numberFmt(stats.totals.liters, 2)}</strong></div>
+      <div class="card metric"><span>Neto a pagar</span><strong>${money(stats.totals.net)}</strong></div>
+      <div class="card metric"><span>Comisión asociación</span><strong>${money(stats.totals.commission)}</strong></div>
+    </section>
+
+    <section class="grid cols-4 dairy-metrics" style="margin-top:18px;">
+      <div class="card metric"><span>Productores activos</span><strong>${stats.activeProducers}</strong></div>
+      <div class="card metric"><span>Registros del mes</span><strong>${stats.records.length}</strong></div>
+      <div class="card metric"><span>Promedio litros/día</span><strong>${numberFmt(stats.averageLitersPerDay, 2)}</strong></div>
+      <div class="card metric"><span>Precio por litro</span><strong>${money(stats.dairyDefaults.price_per_liter)}</strong></div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px; align-items:start;">
+      <div class="card">
+        <div class="page-header" style="margin-bottom:12px;">
+          <div>
+            <h2>Top productores del mes</h2>
+            <p>Ordenado por neto a pagar.</p>
+          </div>
+          <button class="btn secondary" data-route="milk">Cierre mensual</button>
+        </div>
+        ${topProducers.length ? renderMilkSummaryTable(topProducers) : `<div class="empty">Todavía no hay productores con registros este mes.</div>`}
+      </div>
+      ${renderDairyDashboardAlerts(stats)}
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <div class="page-header" style="margin-bottom:12px;">
+        <div>
+          <h2>Últimas llegadas registradas</h2>
+          <p>Validación rápida antes del cierre mensual.</p>
+        </div>
+        <button class="btn secondary" data-route="milk">Abrir Control Diario</button>
+      </div>
+      ${stats.latestRecords.length ? renderMilkRecordsTable(stats.latestRecords) : `<div class="empty">No hay llegadas registradas en el mes actual.</div>`}
+    </section>
+  `;
+}
+
 function renderDashboard() {
+  if (state.company?.business_type === 'asociacion_ganaderos') return renderDairyDashboard();
   const analytics = getCommercialAnalytics();
   const latest = [...analytics.quotes].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, 6);
   const topClients = getTopClients(analytics.quotes).slice(0, 5);
@@ -1264,7 +1434,6 @@ function renderDashboard() {
         <p>Seguimiento de oportunidades, vencimientos, tasa de cierre y montos por estado.</p>
       </div>
       <div class="header-actions">
-        <button class="btn primary" data-route="quote-new">Nueva cotización</button>
         <button class="btn secondary" data-route="reports">Ver seguimiento</button>
       </div>
     </div>
@@ -1284,7 +1453,6 @@ function renderDashboard() {
     </section>
 
     ${renderCommercialAlerts(analytics)}
-    ${renderUsageCard()}
 
     <section class="grid cols-2" style="margin-top:18px;">
       <div class="card">
@@ -1409,7 +1577,6 @@ function renderReports() {
         <p>Prioriza cotizaciones por estado, vigencia, respuesta del cliente y monto.</p>
       </div>
       <div class="header-actions">
-        <button class="btn primary" data-route="quote-new">Nueva cotización</button>
         <button class="btn secondary" data-action="clear-report-filters">Limpiar filtros</button>
       </div>
     </div>
@@ -1663,7 +1830,10 @@ function getClientStats(client) {
   const lastQuote = [...quotes].sort((a, b) => quoteCreatedTime(b) - quoteCreatedTime(a))[0] || null;
   const lastFollowup = getClientLastFollowup(client.id);
   const lastActivityAt = lastFollowup?.created_at || lastQuote?.updated_at || lastQuote?.created_at || client.updated_at || client.created_at;
-  return { quotes, totalQuoted, accepted, totalAccepted, pending, expired, lastQuote, lastFollowup, lastActivityAt };
+  const milkRecords = milkClientRecords(client);
+  const milkLiters = milkRecords.reduce((sum, record) => sum + Number(record.liters || 0), 0);
+  const milkNet = milkRecords.reduce((sum, record) => sum + Number(record.net_amount || 0), 0);
+  return { quotes, totalQuoted, accepted, totalAccepted, pending, expired, lastQuote, lastFollowup, lastActivityAt, milkRecords, milkLiters, milkNet };
 }
 
 function getFilteredClients() {
@@ -1712,7 +1882,7 @@ function renderClients() {
         <h1>CRM de clientes</h1>
         <p>Ficha comercial, historial de cotizaciones, montos aceptados y próxima acción por cliente.</p>
       </div>
-      <button class="btn secondary" data-route="quote-new">Nueva cotización</button>
+
     </div>
 
     <section class="grid cols-4">
@@ -1773,6 +1943,7 @@ function renderClientCrmTable(clients) {
                   <strong>${stats.quotes.length}</strong> cotizaciones<br>
                   <span class="help">Cotizado: ${money(stats.totalQuoted)} · Aceptado: ${money(stats.totalAccepted)}</span><br>
                   <span class="help">Pendientes: ${stats.pending.length} · Vencidas: ${stats.expired.length}</span>
+                  ${stats.milkRecords?.length ? `<br><span class="help">Leche: ${numberFmt(stats.milkLiters, 2)} L · Neto acumulado: ${money(stats.milkNet)}</span>` : ''}
                 </td>
                 <td>
                   ${stats.lastQuote ? `<strong>${escapeHtml(stats.lastQuote.quote_number)}</strong><br><span class="help">Última cotización: ${escapeHtml(formatDateTime(stats.lastQuote.created_at))}</span>` : '<span class="help">Sin cotizaciones</span>'}
@@ -1781,6 +1952,7 @@ function renderClientCrmTable(clients) {
                 <td>
                   <div class="actions">
                     <button class="btn secondary small" data-route="quote-new" data-prefill-client="${client.id}">Cotizar</button>
+                    ${state.company?.business_type === 'asociacion_ganaderos' ? `<button class="btn secondary small" data-route="milk" data-prefill-milk-client="${client.id}">Control Diario</button>` : ''}
                     ${stats.lastQuote ? `<button class="btn secondary small" data-route="quote-view/${stats.lastQuote.id}">Ver última</button>` : ''}
                     <button class="btn danger small" data-action="delete-client" data-id="${client.id}">Borrar</button>
                   </div>
@@ -1857,7 +2029,6 @@ function renderCatalog() {
       </div>
       <div class="header-actions">
         <button class="btn secondary" data-action="seed-catalog">Cargar plantilla ${escapeHtml(businessTypeLabel(state.company?.business_type))}</button>
-        <button class="btn secondary" data-route="quote-new">Nueva cotización</button>
       </div>
     </div>
 
@@ -2006,6 +2177,7 @@ function renderConfigNav(active = 'settings') {
 function renderSettings() {
   const c = state.company || defaultCompany;
   const theme = state.preferences?.theme || c.theme_preference || 'white';
+  const showDairySettings = String(c.business_type || 'general') === 'asociacion_ganaderos';
   return `
     <div class="page-header">
       <div>
@@ -2043,6 +2215,14 @@ function renderSettings() {
             <option value="black" ${theme === 'black' ? 'selected' : ''}>Black</option>
           </select>
           <p class="help">El tema Black cambia la paleta completa para trabajar con fondo oscuro.</p>
+        </div>
+        <div class="field dairy-setting-field ${showDairySettings ? '' : 'hidden'}" data-dairy-settings><label>Precio por litro de leche</label>
+          <input name="default_milk_price_per_liter" type="number" step="0.01" min="0" value="${escapeHtml(c.default_milk_price_per_liter ?? loadDairySettingsFallback().default_milk_price_per_liter ?? 0)}" />
+          <p class="help">Este precio se usa automáticamente en Control Diario.</p>
+        </div>
+        <div class="field dairy-setting-field ${showDairySettings ? '' : 'hidden'}" data-dairy-settings><label>% comisión asociación</label>
+          <input name="default_milk_commission_rate" type="number" step="0.01" min="0" max="100" value="${escapeHtml(c.default_milk_commission_rate ?? loadDairySettingsFallback().default_milk_commission_rate ?? 0)}" />
+          <p class="help">Este porcentaje se aplica automáticamente a cada llegada de leche.</p>
         </div>
         <div class="field"><label>Posición del logo en cotización</label>
           <select name="logo_position">
@@ -2354,8 +2534,9 @@ function getMilkRecordsForMonth(month) {
 function summarizeMilkByProducer(records) {
   const grouped = new Map();
   records.forEach(record => {
-    const key = record.producer_name || 'Sin productor';
-    if (!grouped.has(key)) grouped.set(key, { producer_name: key, days: new Set(), records: 0, liters: 0, gross: 0, commission: 0, net: 0 });
+    const key = record.client_id || record.producer_name || 'Sin productor';
+    const displayName = record.producer_name || (state.clients || []).find(c => String(c.id) === String(record.client_id))?.name || 'Sin productor';
+    if (!grouped.has(key)) grouped.set(key, { producer_name: displayName, client_id: record.client_id || '', days: new Set(), records: 0, liters: 0, gross: 0, commission: 0, net: 0 });
     const row = grouped.get(key);
     row.records += 1;
     row.days.add(record.delivery_date);
@@ -2380,13 +2561,16 @@ function renderMilkControl() {
     acc.net += row.net;
     return acc;
   }, { liters: 0, gross: 0, commission: 0, net: 0 });
-  const producerOptions = [...new Set([...(state.clients || []).map(c => c.name).filter(Boolean), ...(state.milkRecords || []).map(r => r.producer_name).filter(Boolean)])]
-    .sort((a, b) => a.localeCompare(b));
+  const dairyDefaults = getDairyDefaults();
+  const selectedClientId = state.prefillMilkClientId || '';
+  const clientOptions = (state.clients || [])
+    .filter(client => client.is_active !== false)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 
   return `
     <div class="page-header">
       <div>
-        <h1>Control diario de leche</h1>
+        <h1>Control Diario</h1>
         <p>Registra la llegada diaria por productor, calcula comisión y genera el cierre mensual imprimible.</p>
       </div>
       <div class="header-actions">
@@ -2413,19 +2597,24 @@ function renderMilkControl() {
         <h2>Nuevo registro</h2>
         <form data-form="milk-delivery" class="form-grid two">
           <div class="field"><label>Fecha</label><input name="delivery_date" type="date" value="${todayISO()}" required /></div>
-          <div class="field"><label>Productor / ganadero</label>
-            <input name="producer_name" list="milk-producers" placeholder="José Pérez" required />
-            <datalist id="milk-producers">
-              ${producerOptions.map(name => `<option value="${escapeHtml(name)}"></option>`).join('')}
-            </datalist>
+          <div class="field"><label>Productor desde CRM</label>
+            <select name="producer_client_id">
+              <option value="">Añadir nuevo productor</option>
+              ${clientOptions.map(client => `<option value="${escapeHtml(client.id)}" ${String(client.id) === String(selectedClientId) ? 'selected' : ''}>${escapeHtml(client.name)}</option>`).join('')}
+            </select>
+            <p class="help">Selecciona un cliente existente para mantener su historial conectado.</p>
+          </div>
+          <div class="field"><label>Nuevo productor / ganadero</label>
+            <input name="new_producer_name" placeholder="José Pérez" />
+            <p class="help">Si no está en Clientes, se creará automáticamente en el CRM.</p>
           </div>
           <div class="field"><label>Litros recibidos</label><input name="liters" type="number" step="0.01" min="0" placeholder="20" required /></div>
-          <div class="field"><label>Precio por litro</label><input name="price_per_liter" type="number" step="0.01" min="0" placeholder="0.00" required /></div>
-          <div class="field"><label>% comisión asociación</label><input name="commission_rate" type="number" step="0.01" min="0" max="100" placeholder="0" required /></div>
+          <div class="field"><label>Precio por litro</label><input name="price_per_liter" type="number" step="0.01" min="0" value="${escapeHtml(dairyDefaults.price_per_liter)}" readonly required /></div>
+          <div class="field"><label>% comisión asociación</label><input name="commission_rate" type="number" step="0.01" min="0" max="100" value="${escapeHtml(dairyDefaults.commission_rate)}" readonly required /></div>
           <div class="field"><label>Nota</label><input name="notes" placeholder="Opcional: calidad, ruta, observación" /></div>
           <button class="btn primary" type="submit">Registrar llegada</button>
         </form>
-        <p class="help" style="margin-top:12px;">Cálculo usado: litros × precio por litro = monto bruto. Comisión = monto bruto × %. Neto a pagar = bruto - comisión.</p>
+        <p class="help" style="margin-top:12px;">Cálculo usado: litros × precio configurado = monto bruto. Comisión = monto bruto × % configurado. Neto a pagar = bruto - comisión.</p>
         <p class="help">Almacenamiento actual: ${state.milkStorageMode === 'supabase' ? 'Supabase' : 'local del navegador'}.</p>
       </div>
 
@@ -2485,7 +2674,7 @@ function renderMilkRecordsTable(records) {
   return `
     <div class="table-wrap">
       <table class="compact-table">
-        <thead><tr><th>Fecha</th><th>Productor</th><th>Litros</th><th>Precio/L</th><th>% Comisión</th><th>Neto</th><th>Nota</th><th></th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Productor CRM</th><th>Litros</th><th>Precio/L</th><th>% Comisión</th><th>Neto</th><th>Nota</th><th></th></tr></thead>
         <tbody>
           ${records.map(record => `
             <tr>
@@ -2513,22 +2702,88 @@ function handleMilkFilters(form) {
   render();
 }
 
+async function resolveMilkProducerClient(clientId, newName) {
+  const selectedId = String(clientId || '').trim();
+  if (selectedId) {
+    const selected = (state.clients || []).find(client => String(client.id) === selectedId);
+    if (selected) return selected;
+  }
+
+  const cleanName = String(newName || '').trim();
+  if (!cleanName) return null;
+
+  const existing = (state.clients || []).find(client => normalizeTextKey(client.name) === normalizeTextKey(cleanName));
+  if (existing) return existing;
+
+  const payload = {
+    company_id: state.company?.id || 'local-company',
+    name: cleanName,
+    email: '',
+    phone: '',
+    address: '',
+    notes: 'Creado automáticamente desde Control Diario.',
+    tags: 'ganadero, productor leche',
+    commercial_status: 'active',
+    is_active: true
+  };
+
+  if (mode === 'supabase') {
+    const { data, error } = await supabaseClient.from('clients').insert(payload).select('*').single();
+    if (error) throw error;
+    state.clients.unshift(data);
+    return data;
+  }
+
+  const client = { ...payload, id: uid('client'), created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  state.clients.unshift(client);
+  saveLocalState();
+  return client;
+}
+
+async function insertMilkDeliverySupabase(payload, clientId) {
+  const { data, error } = await supabaseClient.from('milk_deliveries').insert(payload).select('*').single();
+  if (!error) return { ...data, client_id: data.client_id || clientId };
+
+  const message = String(error.message || '').toLowerCase();
+  if (message.includes('client_id') || message.includes('column')) {
+    const fallbackPayload = { ...payload };
+    delete fallbackPayload.client_id;
+    const retry = await supabaseClient.from('milk_deliveries').insert(fallbackPayload).select('*').single();
+    if (retry.error) throw retry.error;
+    console.warn('La tabla milk_deliveries no tiene client_id. Ejecuta la migración Phase 8B para mantener el vínculo CRM en Supabase.');
+    return { ...retry.data, client_id: clientId };
+  }
+
+  throw error;
+}
+
 async function saveMilkDelivery(form) {
   const fd = new FormData(form);
+  const dairyDefaults = getDairyDefaults();
+  const producerClient = await resolveMilkProducerClient(fd.get('producer_client_id'), fd.get('new_producer_name'));
+
+  if (!producerClient) {
+    toast('Selecciona un productor del CRM o escribe uno nuevo.');
+    return;
+  }
+  if (Number(dairyDefaults.price_per_liter || 0) <= 0) {
+    toast('Configura el precio por litro en Configuración > Empresa.');
+    setRoute('settings');
+    render();
+    return;
+  }
+
   const record = normalizeMilkRecord({
     company_id: state.company?.id || 'local-company',
-    producer_name: String(fd.get('producer_name') || '').trim(),
+    client_id: producerClient.id,
+    producer_name: producerClient.name,
     delivery_date: String(fd.get('delivery_date') || todayISO()),
     liters: Number(fd.get('liters') || 0),
-    price_per_liter: Number(fd.get('price_per_liter') || 0),
-    commission_rate: Number(fd.get('commission_rate') || 0),
+    price_per_liter: Number(dairyDefaults.price_per_liter || 0),
+    commission_rate: Number(dairyDefaults.commission_rate || 0),
     notes: String(fd.get('notes') || '').trim()
   });
 
-  if (!record.producer_name) {
-    toast('Indica el productor o ganadero.');
-    return;
-  }
   if (record.liters <= 0) {
     toast('Los litros deben ser mayores que cero.');
     return;
@@ -2537,6 +2792,7 @@ async function saveMilkDelivery(form) {
   if (mode === 'supabase' && supabaseClient && state.milkStorageMode === 'supabase') {
     const payload = {
       company_id: state.company.id,
+      client_id: record.client_id,
       producer_name: record.producer_name,
       delivery_date: record.delivery_date,
       liters: record.liters,
@@ -2544,8 +2800,7 @@ async function saveMilkDelivery(form) {
       commission_rate: record.commission_rate,
       notes: record.notes
     };
-    const { data, error } = await supabaseClient.from('milk_deliveries').insert(payload).select('*').single();
-    if (error) throw error;
+    const data = await insertMilkDeliverySupabase(payload, record.client_id);
     state.milkRecords.unshift(normalizeMilkRecord(data));
   } else {
     state.milkRecords.unshift(record);
@@ -2554,8 +2809,9 @@ async function saveMilkDelivery(form) {
   }
 
   state.milkFilters = { month: record.delivery_date.slice(0, 7) };
+  state.prefillMilkClientId = '';
   form.reset();
-  toast('Llegada de leche registrada.');
+  toast('Llegada de leche registrada y conectada al CRM.');
   setRoute('milk');
   render();
 }
@@ -2586,7 +2842,7 @@ function generateMilkPdf() {
   let y = 48;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(17);
-  doc.text('Control mensual de leche', left, y);
+  doc.text('Control Diario - resumen mensual de leche', left, y);
   y += 18;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
@@ -2646,9 +2902,10 @@ function exportMilkCsv() {
     toast('No hay registros para exportar.');
     return;
   }
-  const headers = ['fecha', 'productor', 'litros', 'precio_por_litro', 'comision_pct', 'monto_bruto', 'comision', 'neto_a_pagar', 'nota'];
+  const headers = ['fecha', 'cliente_id', 'productor', 'litros', 'precio_por_litro', 'comision_pct', 'monto_bruto', 'comision', 'neto_a_pagar', 'nota'];
   const lines = [headers.join(',')].concat(records.map(record => [
     record.delivery_date,
+    record.client_id || '',
     record.producer_name,
     record.liters,
     record.price_per_liter,
@@ -2911,6 +3168,17 @@ async function saveCompany(form) {
   const fd = new FormData(form);
   const themePreference = ['white','black'].includes(String(fd.get('theme_preference') || 'white')) ? String(fd.get('theme_preference') || 'white') : 'white';
   setPreference('theme', themePreference, false);
+
+  const nextBusinessType = String(fd.get('business_type') || 'general').trim();
+  const currentDairyFallback = loadDairySettingsFallback();
+  const dairyFields = nextBusinessType === 'asociacion_ganaderos' ? {
+    default_milk_price_per_liter: Number(fd.get('default_milk_price_per_liter') || 0),
+    default_milk_commission_rate: Number(fd.get('default_milk_commission_rate') || 0)
+  } : {
+    default_milk_price_per_liter: Number(state.company?.default_milk_price_per_liter ?? currentDairyFallback.default_milk_price_per_liter ?? 0),
+    default_milk_commission_rate: Number(state.company?.default_milk_commission_rate ?? currentDairyFallback.default_milk_commission_rate ?? 0)
+  };
+
   const payload = {
     name: String(fd.get('name') || '').trim(),
     tax_id: String(fd.get('tax_id') || '').trim(),
@@ -2919,7 +3187,7 @@ async function saveCompany(form) {
     address: String(fd.get('address') || '').trim(),
     currency: String(fd.get('currency') || 'USD').trim().toUpperCase(),
     tax_rate: Number(fd.get('tax_rate') || 0),
-    business_type: String(fd.get('business_type') || 'general').trim(),
+    business_type: nextBusinessType,
     default_quote_notes: String(fd.get('default_quote_notes') || '').trim(),
     default_terms: String(fd.get('default_terms') || '').trim(),
     default_whatsapp_template: String(fd.get('default_whatsapp_template') || '').trim(),
@@ -2927,17 +3195,34 @@ async function saveCompany(form) {
     logo_position: ['left','center','right'].includes(String(fd.get('logo_position') || 'right')) ? String(fd.get('logo_position') || 'right') : 'right'
   };
 
+  saveDairySettingsFallback(dairyFields);
+
   if (mode === 'supabase') {
-    const { data, error } = await supabaseClient
+    const fullPayload = { ...payload, ...dairyFields };
+    let result = await supabaseClient
       .from('companies')
-      .update(payload)
+      .update(fullPayload)
       .eq('id', state.company.id)
       .select('*')
       .single();
-    if (error) throw error;
-    state.company = { ...normalizeCompany(data), theme_preference: themePreference };
+
+    if (result.error) {
+      const message = String(result.error.message || '').toLowerCase();
+      if (message.includes('default_milk') || message.includes('column')) {
+        console.warn('Las columnas ganaderas no existen en companies. Ejecuta schema_phase8b_dairy_crm_settings.sql para guardarlas en Supabase.');
+        result = await supabaseClient
+          .from('companies')
+          .update(payload)
+          .eq('id', state.company.id)
+          .select('*')
+          .single();
+      }
+    }
+
+    if (result.error) throw result.error;
+    state.company = { ...normalizeCompany(result.data), ...dairyFields, theme_preference: themePreference };
   } else {
-    state.company = { ...state.company, ...payload, theme_preference: themePreference };
+    state.company = { ...state.company, ...payload, ...dairyFields, theme_preference: themePreference };
     saveLocalState();
   }
   toast('Empresa guardada.');
@@ -3703,7 +3988,9 @@ app.addEventListener('click', async (event) => {
 
   if (route) {
     const prefillClient = event.target.closest('[data-prefill-client]')?.dataset.prefillClient || '';
+    const prefillMilkClient = event.target.closest('[data-prefill-milk-client]')?.dataset.prefillMilkClient || prefillClient;
     state.prefillClientId = route === 'quote-new' ? prefillClient : '';
+    state.prefillMilkClientId = route === 'milk' ? prefillMilkClient : '';
     setRoute(route);
     render();
     return;
@@ -3789,6 +4076,10 @@ app.addEventListener('change', (event) => {
   if (event.target.matches('[data-theme-select]')) {
     setPreference('theme', event.target.value, false);
     toast('Tema aplicado. Presiona Guardar configuración para confirmar los datos de empresa.');
+  }
+  if (event.target.matches('[name="business_type"]')) {
+    const showDairy = event.target.value === 'asociacion_ganaderos';
+    document.querySelectorAll('[data-dairy-settings]').forEach(el => el.classList.toggle('hidden', !showDairy));
   }
   const quoteForm = event.target.closest('[data-form="quote"]');
   if (quoteForm) {
