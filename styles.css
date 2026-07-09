@@ -531,3 +531,21 @@ html[data-theme="black"] .role-lector { background: #111827; color: #cbd5e1; bor
 html[data-theme="black"] .role-card { background: #0b1220; border-color: var(--border); }
 html[data-theme="black"] .status.accepted { background: rgba(22,101,52,.25); color: #86efac; border-color: rgba(134,239,172,.25); }
 html[data-theme="black"] .status.rejected { background: rgba(153,27,27,.25); color: #fca5a5; border-color: rgba(252,165,165,.25); }
+
+/* Fase 8E: mejoras de autenticación y roles */
+.auth-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.auth-helper { margin: 6px 0 16px; color: var(--muted); }
+.auth-helper h3 { margin: 0 0 6px; color: var(--text); }
+.auth-helper p { margin: 0; line-height: 1.5; }
+.auth-separator { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 13px; font-weight: 800; }
+.auth-separator::before,
+.auth-separator::after { content: ''; height: 1px; background: var(--border); flex: 1; }
+.field-link { align-self: flex-start; padding: 8px 0 0; color: var(--primary-dark); }
+.full-span { grid-column: 1 / -1; }
+.checkbox-line { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--text); }
+.checkbox-line input { width: 18px; height: 18px; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+html[data-theme="black"] .field-link { color: var(--primary); }
+@media (max-width: 640px) {
+  .auth-tabs { grid-template-columns: 1fr; }
+}

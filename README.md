@@ -81,3 +81,22 @@ El propietario de la empresa queda como Superusuario. Para otros usuarios, se re
 ## Nota de seguridad
 
 El frontend sigue usando solo la Publishable key de Supabase. No debe subirse `service_role`, secret keys de Supabase, Lemon Squeezy, Paddle ni Resend a GitHub.
+
+
+## Fase 8E - Autenticación, recuperación y roles
+
+Esta versión corrige el flujo de acceso y agrega recuperación de contraseña desde la pantalla pública.
+
+Cambios principales:
+
+- Nueva pestaña **Olvidé contraseña** en el login.
+- Envío de correo de recuperación usando Supabase Auth.
+- Soporte para enlace de recuperación: al abrir el enlace, la app muestra el formulario para crear nueva contraseña.
+- Soporte para código temporal/OTP: el usuario puede pegar el código recibido y definir una nueva contraseña.
+- Mensajes de error de login más claros, especialmente para credenciales incorrectas, correo no confirmado o registro desactivado.
+- En **Configuración > Usuarios y roles**, se agregó botón **Enviar acceso** para reenviar recuperación a usuarios existentes en Supabase Auth.
+- Al guardar un usuario/rol, se puede marcar **Enviar correo de recuperación/activación al guardar**.
+
+Importante: crear un usuario en **Usuarios y roles** define su rol dentro de la empresa, pero no crea una cuenta de Supabase Auth desde el navegador. Para entrar, ese correo debe crear cuenta en la pantalla pública o existir en Supabase Auth y usar recuperación de contraseña. Crear cuentas Auth directamente desde un superusuario requiere una Edge Function o Worker con service_role, nunca exponer esa llave en frontend.
+
+Ver también: `supabase/auth_recovery_email_template.md`.

@@ -80,7 +80,8 @@ let state = {
   reportFilters: { period: 'all', status: 'all', attention: 'all' },
   clientFilters: { status: 'all', search: '' },
   authMessage: '',
-  activeAuthTab: 'login'
+  activeAuthTab: 'login',
+  passwordRecovery: { active: false, email: '', mode: '' }
 };
 
 const defaultCompany = {
@@ -128,7 +129,8 @@ const localDefaultState = {
   prefillMilkClientId: '',
   preferences: loadPreferences(),
   reportFilters: { period: 'all', status: 'all', attention: 'all' },
-  clientFilters: { status: 'all', search: '' }
+  clientFilters: { status: 'all', search: '' },
+  passwordRecovery: { active: false, email: '', mode: '' }
 };
 
 function sanitizeReferralCode(value) {
@@ -448,7 +450,23 @@ async function init() {
       // Evita recargar toda la aplicación cuando Supabase solo refresca el token.
       // Esa recarga era la causa de que una cotización sin guardar perdiera sus items
       // al cambiar de pestaña y volver al navegador.
-      if (['TOKEN_REFRESHED', 'USER_UPDATED'].includes(event)) {
+      if (event === 'TOKEN_REFRESHED') {
+        if (session?.user) state.session = normalizeSession(session.user);
+        return;
+      }
+
+      if (event === 'PASSWORD_RECOVERY' && session?.user) {
+        state.session = normalizeSession(session.user);
+        state.passwordRecovery = { active: true, email: session.user.email || '', mode: 'link' };
+        state.activeAuthTab = 'reset';
+        state.authMessage = 'Correo validado. Introduce una contraseña nueva para terminar la recuperación.';
+        state.loading = false;
+        setRoute('auth');
+        render();
+        return;
+      }
+
+      if (event === 'USER_UPDATED') {
         if (session?.user) state.session = normalizeSession(session.user);
         return;
       }
@@ -459,6 +477,11 @@ async function init() {
         try {
           if (session?.user) {
             state.session = normalizeSession(session.user);
+            if (state.passwordRecovery?.active) {
+              state.loading = false;
+              render();
+              return;
+            }
             await loadRemoteData();
           } else {
             state.loading = false;
@@ -466,12 +489,13 @@ async function init() {
             state.company = null;
             state.clients = [];
             state.quotes = [];
+            state.passwordRecovery = { active: false, email: '', mode: '' };
             render();
           }
         } catch (error) {
           console.error(error);
           state.loading = false;
-          state.authMessage = error.message || 'No se pudo cargar la sesión.';
+          state.authMessage = friendlyAuthError(error);
           render();
         }
       }, 0);
@@ -568,6 +592,27 @@ function normalizeSession(user) {
     name: user.user_metadata?.full_name || user.email || 'Usuario',
     provider: mode
   };
+}
+
+
+function friendlyAuthError(error) {
+  const raw = String(error?.message || error || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return 'No se pudo autenticar.';
+  if (lower.includes('invalid login credentials')) return 'Correo o contraseña incorrectos. Si el usuario fue creado por un administrador, primero debe crear cuenta con ese correo o usar “Olvidé mi contraseña” si ya existe en Auth.';
+  if (lower.includes('email not confirmed')) return 'El correo todavía no está confirmado. Revisa el correo de confirmación o desactiva Confirm email mientras estás en desarrollo.';
+  if (lower.includes('signup disabled')) return 'El registro está desactivado en Supabase Auth. Activa nuevos registros o crea usuarios desde el panel de Supabase.';
+  if (lower.includes('for security purposes')) return 'Supabase limitó el envío por seguridad. Espera unos segundos antes de solicitar otro correo.';
+  if (lower.includes('user already registered') || lower.includes('already registered')) return 'Ese correo ya está registrado. Usa Entrar o recupera la contraseña.';
+  return raw;
+}
+
+function recoveryRedirectUrl() {
+  return appBaseUrl();
+}
+
+function isPasswordStrongEnough(password) {
+  return String(password || '').length >= 8;
 }
 
 
@@ -959,7 +1004,9 @@ function planStatusText() {
 }
 
 function getRoute() {
-  return window.location.hash.replace('#', '') || (state.session ? 'dashboard' : 'home');
+  const raw = window.location.hash.replace('#', '');
+  if (raw.includes('access_token=') || raw.includes('refresh_token=') || raw.includes('type=recovery')) return 'auth';
+  return raw || (state.session ? 'dashboard' : 'home');
 }
 
 function setRoute(route) {
@@ -1137,7 +1184,7 @@ function render() {
   }
 
   const route = getRoute();
-  if (!state.session) renderPublic(route);
+  if (!state.session || state.passwordRecovery?.active) renderPublic(state.passwordRecovery?.active ? 'auth' : route);
   else renderApp(route);
 }
 
@@ -1302,10 +1349,13 @@ function renderPublic(route) {
 }
 function renderAuthBox() {
   const disabled = mode !== 'supabase';
+  const tab = state.passwordRecovery?.active ? 'reset' : state.activeAuthTab;
+  const title = tab === 'forgot' ? 'Recuperar acceso' : tab === 'reset' ? 'Crear nueva contraseña' : 'Acceso';
   return `
     <div class="auth-tabs">
-      <button class="auth-tab ${state.activeAuthTab === 'login' ? 'active' : ''}" data-auth-tab="login">Entrar</button>
-      <button class="auth-tab ${state.activeAuthTab === 'register' ? 'active' : ''}" data-auth-tab="register">Crear cuenta</button>
+      <button class="auth-tab ${tab === 'login' ? 'active' : ''}" data-auth-tab="login">Entrar</button>
+      <button class="auth-tab ${tab === 'register' ? 'active' : ''}" data-auth-tab="register">Crear cuenta</button>
+      <button class="auth-tab ${tab === 'forgot' ? 'active' : ''}" data-auth-tab="forgot">Olvidé contraseña</button>
     </div>
     ${state.authMessage ? `<div class="notice">${escapeHtml(state.authMessage)}</div>` : ''}
     ${disabled ? `
@@ -1313,25 +1363,86 @@ function renderAuthBox() {
         Supabase no está configurado. Puedes usar el demo local o editar <strong>config.js</strong> con tus credenciales públicas.
       </div>
     ` : ''}
-    <form data-form="auth" class="form-grid">
-      ${state.activeAuthTab === 'register' ? `
+    ${tab === 'forgot' ? renderForgotPasswordBox(disabled) : tab === 'reset' ? renderSetNewPasswordBox(disabled) : `
+      <form data-form="auth" class="form-grid">
+        ${tab === 'register' ? `
+          <div class="field">
+            <label>Nombre</label>
+            <input name="name" placeholder="Tu nombre" ${disabled ? 'disabled' : ''} />
+          </div>
+        ` : ''}
         <div class="field">
-          <label>Nombre</label>
-          <input name="name" placeholder="Tu nombre" ${disabled ? 'disabled' : ''} />
+          <label>Correo</label>
+          <input name="email" type="email" required placeholder="tuempresa@email.com" autocomplete="email" ${disabled ? 'disabled' : ''} />
         </div>
-      ` : ''}
+        <div class="field">
+          <label>Contraseña</label>
+          <input name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres" autocomplete="${tab === 'register' ? 'new-password' : 'current-password'}" ${disabled ? 'disabled' : ''} />
+          ${tab === 'login' ? '<button class="link-button field-link" type="button" data-auth-tab="forgot">Olvidé mi contraseña</button>' : ''}
+        </div>
+        <button class="btn primary full" type="submit" ${disabled ? 'disabled' : ''}>
+          ${tab === 'register' ? 'Crear cuenta' : 'Entrar'}
+        </button>
+        ${tab === 'register' ? '<p class="help full-span">Si un administrador ya te agregó en Usuarios y roles, crea tu cuenta con ese mismo correo. Al entrar, la app te vinculará automáticamente a la empresa y aplicará tu rol.</p>' : ''}
+        <button class="btn secondary full" type="button" data-action="start-demo">Usar demo local</button>
+      </form>
+    `}
+  `;
+}
+
+function renderForgotPasswordBox(disabled) {
+  return `
+    <div class="auth-helper">
+      <h3>Recuperar contraseña</h3>
+      <p>Escribe el correo del usuario. Se enviará un correo de recuperación. Si Supabase está configurado con código OTP, también podrás pegar el código temporal aquí y definir una contraseña nueva.</p>
+    </div>
+    <form data-form="forgot-password" class="form-grid">
+      <div class="field full-span">
+        <label>Correo del usuario</label>
+        <input name="email" type="email" required placeholder="usuario@empresa.com" autocomplete="email" ${disabled ? 'disabled' : ''} />
+      </div>
+      <button class="btn primary full" type="submit" ${disabled ? 'disabled' : ''}>Enviar correo de recuperación</button>
+    </form>
+    <div class="auth-separator"><span>Si recibiste un código temporal</span></div>
+    <form data-form="password-reset-code" class="form-grid">
       <div class="field">
         <label>Correo</label>
-        <input name="email" type="email" required placeholder="tuempresa@email.com" ${disabled ? 'disabled' : ''} />
+        <input name="email" type="email" required placeholder="usuario@empresa.com" autocomplete="email" ${disabled ? 'disabled' : ''} />
       </div>
       <div class="field">
-        <label>Contraseña</label>
-        <input name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres" ${disabled ? 'disabled' : ''} />
+        <label>Código / contraseña temporal</label>
+        <input name="token" required placeholder="Código recibido por correo" autocomplete="one-time-code" ${disabled ? 'disabled' : ''} />
       </div>
-      <button class="btn primary full" type="submit" ${disabled ? 'disabled' : ''}>
-        ${state.activeAuthTab === 'register' ? 'Crear cuenta' : 'Entrar'}
-      </button>
-      <button class="btn secondary full" type="button" data-action="start-demo">Usar demo local</button>
+      <div class="field">
+        <label>Nueva contraseña</label>
+        <input name="new_password" type="password" required minlength="8" placeholder="Mínimo 8 caracteres" autocomplete="new-password" ${disabled ? 'disabled' : ''} />
+      </div>
+      <div class="field">
+        <label>Confirmar contraseña</label>
+        <input name="confirm_password" type="password" required minlength="8" placeholder="Repite la contraseña" autocomplete="new-password" ${disabled ? 'disabled' : ''} />
+      </div>
+      <button class="btn primary full" type="submit" ${disabled ? 'disabled' : ''}>Validar y cambiar contraseña</button>
+      <p class="help full-span">Si el correo trae un enlace, ábrelo desde este mismo navegador. La app mostrará automáticamente la casilla para crear la nueva contraseña.</p>
+    </form>
+  `;
+}
+
+function renderSetNewPasswordBox(disabled) {
+  return `
+    <div class="auth-helper">
+      <h3>Nueva contraseña</h3>
+      <p>Correo validado: <strong>${escapeHtml(state.passwordRecovery?.email || state.session?.email || '')}</strong>. Define la contraseña que usará este usuario para entrar.</p>
+    </div>
+    <form data-form="password-update" class="form-grid">
+      <div class="field">
+        <label>Nueva contraseña</label>
+        <input name="new_password" type="password" required minlength="8" placeholder="Mínimo 8 caracteres" autocomplete="new-password" ${disabled ? 'disabled' : ''} />
+      </div>
+      <div class="field">
+        <label>Confirmar contraseña</label>
+        <input name="confirm_password" type="password" required minlength="8" placeholder="Repite la contraseña" autocomplete="new-password" ${disabled ? 'disabled' : ''} />
+      </div>
+      <button class="btn primary full" type="submit" ${disabled ? 'disabled' : ''}>Guardar contraseña y entrar</button>
     </form>
   `;
 }
@@ -3278,7 +3389,8 @@ function renderTeamMembers() {
           </select>
         </div>
         <div class="field" style="grid-column:1/-1;">
-          <p class="help">El usuario debe crear cuenta con ese mismo correo. Al entrar, la app lo vinculará a esta empresa y aplicará su rol.</p>
+          <label class="checkbox-line"><input type="checkbox" name="send_setup" value="1" /> Enviar correo de recuperación/activación al guardar</label>
+          <p class="help">Este registro define el rol dentro de la empresa. Para poder entrar, el correo también debe existir en Supabase Auth: el usuario puede crear cuenta con ese mismo correo o usar “Olvidé contraseña” si ya existe. Crear el rol aquí no crea una contraseña directamente desde el frontend.</p>
         </div>
         <button class="btn primary" type="submit">Guardar usuario</button>
       </form>
@@ -3303,7 +3415,10 @@ function renderTeamMembers() {
                     <td><span class="help">${escapeHtml(roleDescription(roleKey))}</span></td>
                     <td>${String(member.status || 'active') === 'active' ? '<span class="status accepted">Activo</span>' : '<span class="status rejected">Inactivo</span>'}</td>
                     <td>
-                      ${isOwnerSuper ? '<span class="help">Protegido</span>' : `<button class="btn danger small" data-action="deactivate-team-member" data-id="${escapeHtml(member.id)}">Desactivar</button>`}
+                      <div class="row-actions">
+                        <button class="btn secondary small" data-action="send-setup-email" data-email="${escapeHtml(member.email || '')}">Enviar acceso</button>
+                        ${isOwnerSuper ? '<span class="help">Protegido</span>' : `<button class="btn danger small" data-action="deactivate-team-member" data-id="${escapeHtml(member.id)}">Desactivar</button>`}
+                      </div>
                     </td>
                   </tr>
                 `;
@@ -3365,10 +3480,33 @@ async function saveTeamMember(form) {
     state.currentMember = state.teamMembers.find(member => normalizeEmail(member.email) === normalizeEmail(state.session?.email)) || state.currentMember;
     saveLocalState();
   }
+  const sendSetup = fd.get('send_setup') === '1';
+  if (sendSetup && mode === 'supabase') {
+    await sendUserSetupEmail(payload.email, false);
+    toast('Usuario guardado. Si el correo existe en Auth, se envió el acceso.');
+  } else {
+    toast('Usuario y rol guardados.');
+  }
   form.reset();
-  toast('Usuario y rol guardados.');
   setRoute('team');
   render();
+}
+
+async function sendUserSetupEmail(email, shouldRender = true) {
+  if (mode !== 'supabase') {
+    toast('Supabase no está configurado.');
+    return;
+  }
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    toast('No hay correo válido para enviar acceso.');
+    return;
+  }
+  const { error } = await supabaseClient.auth.resetPasswordForEmail(normalizedEmail, {
+    redirectTo: recoveryRedirectUrl()
+  });
+  if (error) throw error;
+  if (shouldRender) toast('Correo enviado. Si el usuario existe en Supabase Auth, recibirá el enlace o código de recuperación.');
 }
 
 async function deactivateTeamMember(id) {
@@ -3564,10 +3702,16 @@ async function handleAuth(form) {
     return;
   }
   const formData = new FormData(form);
-  const email = String(formData.get('email') || '').trim();
+  const email = normalizeEmail(formData.get('email'));
   const password = String(formData.get('password') || '');
   const name = String(formData.get('name') || '').trim();
   state.authMessage = '';
+
+  if (!email || !password) {
+    state.authMessage = 'Correo y contraseña son obligatorios.';
+    render();
+    return;
+  }
 
   try {
     state.loading = true;
@@ -3589,17 +3733,142 @@ async function handleAuth(form) {
 
     if (!data?.session?.user) {
       state.loading = false;
-      state.authMessage = 'Cuenta creada. Revisa tu correo si Supabase requiere confirmación antes de entrar.';
+      state.authMessage = state.activeAuthTab === 'register'
+        ? 'Cuenta creada. Revisa tu correo si Supabase requiere confirmación antes de entrar.'
+        : 'No se recibió sesión de Supabase. Revisa si el correo requiere confirmación.';
       render();
       return;
     }
 
+    state.passwordRecovery = { active: false, email: '', mode: '' };
     state.session = normalizeSession(data.session.user);
     await loadRemoteData();
     setRoute('dashboard');
   } catch (error) {
     state.loading = false;
-    state.authMessage = error.message || 'No se pudo autenticar.';
+    state.authMessage = friendlyAuthError(error);
+    render();
+  }
+}
+
+async function handleForgotPassword(form) {
+  if (mode !== 'supabase') {
+    toast('Configura Supabase para usar recuperación de contraseña.');
+    return;
+  }
+  const email = normalizeEmail(new FormData(form).get('email'));
+  if (!email) {
+    state.authMessage = 'Escribe el correo del usuario.';
+    render();
+    return;
+  }
+  try {
+    state.authMessage = '';
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+      redirectTo: recoveryRedirectUrl()
+    });
+    if (error) throw error;
+    state.authMessage = 'Correo enviado. Si el usuario existe en Supabase Auth, recibirá instrucciones para recuperar el acceso. Si recibe un código temporal, puede pegarlo aquí junto a la nueva contraseña.';
+    state.activeAuthTab = 'forgot';
+    render();
+  } catch (error) {
+    state.authMessage = friendlyAuthError(error);
+    render();
+  }
+}
+
+async function handlePasswordResetCode(form) {
+  if (mode !== 'supabase') {
+    toast('Configura Supabase para usar recuperación de contraseña.');
+    return;
+  }
+  const fd = new FormData(form);
+  const email = normalizeEmail(fd.get('email'));
+  const token = String(fd.get('token') || '').trim();
+  const newPassword = String(fd.get('new_password') || '');
+  const confirmPassword = String(fd.get('confirm_password') || '');
+
+  if (!email || !token) {
+    state.authMessage = 'Correo y código temporal son obligatorios.';
+    render();
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    state.authMessage = 'Las contraseñas no coinciden.';
+    render();
+    return;
+  }
+  if (!isPasswordStrongEnough(newPassword)) {
+    state.authMessage = 'La contraseña nueva debe tener al menos 8 caracteres.';
+    render();
+    return;
+  }
+
+  try {
+    state.loading = true;
+    render();
+    const { data, error } = await supabaseClient.auth.verifyOtp({
+      email,
+      token,
+      type: 'recovery'
+    });
+    if (error) throw error;
+    const user = data?.user || data?.session?.user;
+    if (user) state.session = normalizeSession(user);
+    const { data: updated, error: updateError } = await supabaseClient.auth.updateUser({ password: newPassword });
+    if (updateError) throw updateError;
+    const currentUser = updated?.user || user || (await supabaseClient.auth.getUser()).data?.user;
+    if (!currentUser) throw new Error('No se pudo validar el usuario después de cambiar la contraseña.');
+    state.session = normalizeSession(currentUser);
+    state.passwordRecovery = { active: false, email: '', mode: '' };
+    state.activeAuthTab = 'login';
+    await loadRemoteData();
+    setRoute('dashboard');
+    toast('Contraseña actualizada.');
+  } catch (error) {
+    state.loading = false;
+    state.authMessage = friendlyAuthError(error);
+    state.activeAuthTab = 'forgot';
+    render();
+  }
+}
+
+async function handleUpdatePassword(form) {
+  if (mode !== 'supabase') {
+    toast('Configura Supabase para usar recuperación de contraseña.');
+    return;
+  }
+  const fd = new FormData(form);
+  const newPassword = String(fd.get('new_password') || '');
+  const confirmPassword = String(fd.get('confirm_password') || '');
+
+  if (newPassword !== confirmPassword) {
+    state.authMessage = 'Las contraseñas no coinciden.';
+    render();
+    return;
+  }
+  if (!isPasswordStrongEnough(newPassword)) {
+    state.authMessage = 'La contraseña nueva debe tener al menos 8 caracteres.';
+    render();
+    return;
+  }
+
+  try {
+    state.loading = true;
+    render();
+    const { data, error } = await supabaseClient.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    const currentUser = data?.user || (await supabaseClient.auth.getUser()).data?.user;
+    if (!currentUser) throw new Error('No se pudo validar el usuario después de cambiar la contraseña.');
+    state.session = normalizeSession(currentUser);
+    state.passwordRecovery = { active: false, email: '', mode: '' };
+    state.activeAuthTab = 'login';
+    await loadRemoteData();
+    setRoute('dashboard');
+    toast('Contraseña actualizada.');
+  } catch (error) {
+    state.loading = false;
+    state.authMessage = friendlyAuthError(error);
     render();
   }
 }
@@ -4479,6 +4748,7 @@ app.addEventListener('click', async (event) => {
   if (!actionEl) return;
   const action = actionEl.dataset.action;
   const id = actionEl.dataset.id;
+  const email = actionEl.dataset.email;
   const plan = actionEl.dataset.plan;
 
   try {
@@ -4502,6 +4772,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'seed-catalog') await seedCatalogForBusinessType();
     if (action === 'delete-message-template') await deleteMessageTemplate(id);
     if (action === 'deactivate-team-member') await deactivateTeamMember(id);
+    if (action === 'send-setup-email') await sendUserSetupEmail(email);
     if (action === 'clear-logo') clearCompanyLogo();
     if (action === 'delete-milk-record') await deleteMilkRecord(id);
     if (action === 'milk-pdf') generateMilkPdf();
@@ -4519,6 +4790,9 @@ app.addEventListener('submit', async (event) => {
   const type = form.dataset.form;
   try {
     if (type === 'auth') await handleAuth(form);
+    if (type === 'forgot-password') await handleForgotPassword(form);
+    if (type === 'password-reset-code') await handlePasswordResetCode(form);
+    if (type === 'password-update') await handleUpdatePassword(form);
     if (type === 'company') await saveCompany(form);
     if (type === 'client') await saveClient(form);
     if (type === 'quote') await saveQuote(form);
