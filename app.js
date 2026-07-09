@@ -6,6 +6,7 @@ const QUOTE_DRAFT_STORAGE_KEY = 'cotizaflow_quote_form_draft_v1';
 const PREFERENCES_STORAGE_KEY = 'cotizaflow_preferences_v1';
 const MILK_RECORDS_STORAGE_KEY = 'cotizaflow_milk_records_v1';
 const DAIRY_SETTINGS_STORAGE_KEY = 'cotizaflow_dairy_settings_v1';
+const INVOICE_FALLBACK_STORAGE_KEY = 'cotizaflow_invoices_fallback_v1';
 
 const PLAN_CATALOG = {
   free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, catalogLimit: 10, description: 'Prueba limitada para validar el producto.' },
@@ -20,18 +21,18 @@ const ACTIVE_BILLING_STATUSES = new Set(['active', 'trialing', 'on_trial', 'paid
 const ROLE_DEFINITIONS = {
   superuser: {
     label: 'Superusuario',
-    description: 'Acceso total: empresa, usuarios, ventas, catálogo, reportes, pagos, referidos e integraciones.',
+    description: 'Acceso total: empresa, usuarios, ventas, facturas, pagos, catálogo, reportes, referidos e integraciones.',
     permissions: ['*']
   },
   admin: {
     label: 'Administrador',
-    description: 'Administra operación diaria, configuración funcional, ventas, clientes, catálogo y reportes.',
-    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','quotes_delete','clients_read','clients_write','clients_delete','catalog_read','catalog_write','catalog_delete','templates_read','templates_write','templates_delete','milk_read','milk_write','milk_delete','milk_export','settings_company','billing_manage','affiliates_manage','integrations_manage','users_manage']
+    description: 'Administra operación diaria, configuración funcional, ventas, facturas, clientes, catálogo y reportes.',
+    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','quotes_delete','clients_read','clients_write','clients_delete','catalog_read','catalog_write','catalog_delete','templates_read','templates_write','templates_delete','invoices_read','invoices_write','invoices_payments','invoices_void','milk_read','milk_write','milk_delete','milk_export','settings_company','billing_manage','affiliates_manage','integrations_manage','users_manage']
   },
   ventas: {
     label: 'Ventas',
-    description: 'Gestiona clientes, cotizaciones, seguimiento y catálogo en modo operativo.',
-    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','clients_read','clients_write','catalog_read','templates_read']
+    description: 'Gestiona clientes, cotizaciones, facturas borrador, seguimiento y catálogo en modo operativo.',
+    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','clients_read','clients_write','catalog_read','templates_read','invoices_read','invoices_write']
   },
   operador_diario: {
     label: 'Operador diario',
@@ -40,13 +41,13 @@ const ROLE_DEFINITIONS = {
   },
   contabilidad: {
     label: 'Contabilidad',
-    description: 'Consulta reportes, pagos mensuales, control diario y datos necesarios para cierre.',
-    permissions: ['dashboard_read','reports_read','milk_read','milk_export','clients_read','quotes_read','billing_manage']
+    description: 'Gestiona facturas, pagos, reportes, control diario y datos necesarios para cierre.',
+    permissions: ['dashboard_read','reports_read','milk_read','milk_export','clients_read','quotes_read','invoices_read','invoices_write','invoices_payments','invoices_void','billing_manage']
   },
   lector: {
     label: 'Solo lectura',
     description: 'Consulta información sin crear, editar o eliminar registros.',
-    permissions: ['dashboard_read','reports_read','quotes_read','clients_read','catalog_read','templates_read','milk_read']
+    permissions: ['dashboard_read','reports_read','quotes_read','clients_read','catalog_read','templates_read','milk_read','invoices_read']
   }
 };
 
@@ -58,6 +59,8 @@ let state = {
   company: null,
   clients: [],
   quotes: [],
+  invoices: [],
+  invoiceStorageMode: 'local',
   billing: null,
   affiliate: null,
   referrals: [],
@@ -102,7 +105,13 @@ const defaultCompany = {
   logo_position: 'right',
   theme_preference: 'white',
   default_milk_price_per_liter: 0,
-  default_milk_commission_rate: 0
+  default_milk_commission_rate: 0,
+  invoice_prefix: 'F-',
+  next_invoice_number: 1,
+  default_invoice_due_days: 15,
+  default_invoice_notes: 'Gracias por su compra. Esta factura comercial está sujeta a los términos acordados.',
+  default_invoice_terms: '',
+  invoice_fiscal_mode: 'commercial_internal'
 };
 
 const localDefaultState = {
@@ -110,6 +119,8 @@ const localDefaultState = {
   company: { ...defaultCompany },
   clients: [],
   quotes: [],
+  invoices: [],
+  invoiceStorageMode: 'local',
   billing: null,
   affiliate: null,
   referrals: [],
@@ -155,13 +166,13 @@ const TRANSLATIONS = {
   es: {
     language: 'Idioma', spanish: 'Español', english: 'Inglés', dashboard: 'Dashboard', quotes: 'Cotizaciones',
     newQuote: 'Nueva cotización', followup: 'Seguimiento', clients: 'CRM clientes', catalog: 'Catálogo', templates: 'Plantillas',
-    settings: 'Configuración', milkControl: 'Control Diario', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones', users: 'Usuarios y roles',
+    settings: 'Configuración', milkControl: 'Control Diario', invoices: 'Facturas', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones', users: 'Usuarios y roles',
     back: 'Regresar', theme: 'Temas', white: 'White', black: 'Black', saveSettings: 'Guardar configuración'
   },
   en: {
     language: 'Language', spanish: 'Spanish', english: 'English', dashboard: 'Dashboard', quotes: 'Quotes',
     newQuote: 'New quote', followup: 'Follow-up', clients: 'Client CRM', catalog: 'Catalog', templates: 'Templates',
-    settings: 'Settings', milkControl: 'Daily control', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations', users: 'Users & roles',
+    settings: 'Settings', milkControl: 'Daily control', invoices: 'Invoices', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations', users: 'Users & roles',
     back: 'Back', theme: 'Themes', white: 'White', black: 'Black', saveSettings: 'Save settings'
   }
 };
@@ -528,6 +539,8 @@ function loadLocalState() {
       company: { ...defaultCompany, ...(parsed.company || {}) },
       clients: parsed.clients || [],
       quotes: parsed.quotes || [],
+      invoices: (parsed.invoices || []).map(normalizeInvoice),
+      invoiceStorageMode: 'local',
       billing: parsed.billing || null,
       affiliate: parsed.affiliate || null,
       referrals: parsed.referrals || [],
@@ -560,6 +573,8 @@ function saveLocalState() {
     company: state.company,
     clients: state.clients,
     quotes: state.quotes,
+    invoices: state.invoices,
+    invoiceStorageMode: state.invoiceStorageMode,
     billing: state.billing,
     affiliate: state.affiliate,
     referrals: state.referrals,
@@ -769,6 +784,7 @@ async function loadRemoteData() {
     }));
 
     await loadMilkRecords();
+    await loadInvoices();
   } catch (error) {
     console.error(error);
     state.authMessage = error.message || 'No se pudo cargar Supabase.';
@@ -1457,6 +1473,7 @@ function renderApp(route) {
           ${can('reports_read') ? navLink('reports', t('followup')) : ''}
           ${state.company?.business_type === 'asociacion_ganaderos' && can('milk_read') ? navLink('milk', t('milkControl')) : ''}
           ${can('quotes_read') ? navLink('quotes', t('quotes')) : ''}
+          ${can('invoices_read') ? navLink('invoices', t('invoices')) : ''}
           ${can('clients_read') ? navLink('clients', t('clients')) : ''}
           ${can('catalog_read') ? navLink('catalog', t('catalog')) : ''}
           ${can('templates_read') ? navLink('templates', t('templates')) : ''}
@@ -1481,11 +1498,13 @@ function navLink(route, label) {
 function renderRoute(route) {
   if (route.startsWith('quote-edit/')) return can('quotes_write') ? renderQuoteForm(route.split('/')[1]) : renderAccessDenied();
   if (route.startsWith('quote-view/')) return can('quotes_read') ? renderQuoteView(route.split('/')[1]) : renderAccessDenied();
+  if (route.startsWith('invoice-view/')) return can('invoices_read') ? renderInvoiceView(route.split('/')[1]) : renderAccessDenied();
 
   const routePermissions = {
     quotes: 'quotes_read',
     'quote-new': 'quotes_write',
     reports: 'reports_read',
+    invoices: 'invoices_read',
     clients: 'clients_read',
     catalog: 'catalog_read',
     templates: 'templates_read',
@@ -1503,6 +1522,7 @@ function renderRoute(route) {
     case 'quotes': return renderQuotes();
     case 'quote-new': return renderQuoteForm();
     case 'reports': return renderReports();
+    case 'invoices': return renderInvoices();
     case 'clients': return renderClients();
     case 'catalog': return renderCatalog();
     case 'templates': return renderTemplates();
@@ -1703,7 +1723,8 @@ function getDairyDashboardStats(month = currentMonthValue()) {
     averageLitersPerDay: uniqueDays.size ? totals.liters / uniqueDays.size : 0,
     dairyDefaults,
     latestRecords: records.slice(0, 8),
-    pendingQuotes: getCommercialAnalytics().needsFollowup.length
+    pendingQuotes: getCommercialAnalytics().needsFollowup.length,
+    invoiceStats: getInvoiceAnalytics()
   };
 }
 
@@ -1759,6 +1780,13 @@ function renderDairyDashboard() {
       <div class="card metric"><span>Precio por litro</span><strong>${money(stats.dairyDefaults.price_per_liter)}</strong></div>
     </section>
 
+    <section class="grid cols-4 dairy-metrics" style="margin-top:18px;">
+      <div class="card metric"><span>Ventas facturadas</span><strong>${money(stats.invoiceStats.totalIssued)}</strong></div>
+      <div class="card metric"><span>Cuentas por cobrar</span><strong>${money(stats.invoiceStats.totalReceivable)}</strong></div>
+      <div class="card metric"><span>Cobrado</span><strong>${money(stats.invoiceStats.totalPaid)}</strong></div>
+      <div class="card metric"><span>Facturas vencidas</span><strong>${stats.invoiceStats.overdue.length}</strong></div>
+    </section>
+
     <section class="grid cols-2" style="margin-top:18px; align-items:start;">
       <div class="card">
         <div class="page-header" style="margin-bottom:12px;">
@@ -1792,6 +1820,7 @@ function renderDashboard() {
   const latest = [...analytics.quotes].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, 6);
   const topClients = getTopClients(analytics.quotes).slice(0, 5);
   const topServices = getTopServices(analytics.quotes).slice(0, 5);
+  const invoiceStats = getInvoiceAnalytics();
 
   return `
     <div class="page-header">
@@ -1816,6 +1845,13 @@ function renderDashboard() {
       <div class="card metric"><span>Monto aceptado</span><strong>${money(analytics.totalAccepted)}</strong></div>
       <div class="card metric"><span>Monto rechazado</span><strong>${money(analytics.totalRejected)}</strong></div>
       <div class="card metric"><span>Monto vencido</span><strong>${money(analytics.totalExpired)}</strong></div>
+    </section>
+
+    <section class="grid cols-4" style="margin-top:18px;">
+      <div class="card metric"><span>Facturas emitidas</span><strong>${invoiceStats.issuedCount}</strong></div>
+      <div class="card metric"><span>Cuentas por cobrar</span><strong>${money(invoiceStats.totalReceivable)}</strong></div>
+      <div class="card metric"><span>Cobrado</span><strong>${money(invoiceStats.totalPaid)}</strong></div>
+      <div class="card metric"><span>Facturas vencidas</span><strong>${invoiceStats.overdue.length}</strong></div>
     </section>
 
     ${renderCommercialAlerts(analytics)}
@@ -2093,6 +2129,687 @@ function renderUsageCard() {
   `;
 }
 
+function invoiceFallbackKey() {
+  const userId = state.session?.id || 'local-user';
+  const companyId = state.company?.id || 'local-company';
+  return `${INVOICE_FALLBACK_STORAGE_KEY}:${userId}:${companyId}`;
+}
+
+function loadInvoicesLocalFallback() {
+  try {
+    const raw = localStorage.getItem(invoiceFallbackKey());
+    return raw ? JSON.parse(raw).map(normalizeInvoice) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function saveInvoicesLocalFallback() {
+  try {
+    localStorage.setItem(invoiceFallbackKey(), JSON.stringify((state.invoices || []).map(normalizeInvoice)));
+  } catch (error) {
+    console.warn('No se pudieron guardar facturas localmente:', error);
+  }
+}
+
+async function loadInvoices() {
+  state.invoiceStorageMode = 'local';
+  state.invoices = mode === 'local' ? (state.invoices || []).map(normalizeInvoice) : loadInvoicesLocalFallback();
+  if (mode !== 'supabase' || !supabaseClient || !state.company?.id) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('invoices')
+      .select('*, invoice_items(*), invoice_payments(*)')
+      .eq('company_id', state.company.id)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    state.invoices = (data || []).map(row => normalizeInvoice({
+      ...row,
+      items: (row.invoice_items || []).sort((a, b) => Number(a.position || 0) - Number(b.position || 0)),
+      payments: (row.invoice_payments || []).sort((a, b) => String(b.payment_date || '').localeCompare(String(a.payment_date || '')))
+    }));
+    state.invoiceStorageMode = 'supabase';
+  } catch (error) {
+    console.warn('Facturas en modo local/fallback. Ejecuta schema_phase9_invoices.sql para persistencia Supabase:', error.message || error);
+  }
+}
+
+function getBusinessInvoiceProfile(businessType = state.company?.business_type || 'general') {
+  const profiles = {
+    asociacion_ganaderos: {
+      title: 'Facturas de venta de insumos y servicios',
+      subtitle: 'Para asociaciones ganaderas, este módulo factura ventas como alimento, medicamentos, transporte o servicios. La leche recibida se maneja en Control Diario y se liquidará aparte.',
+      prefix: 'FG-',
+      dueDays: 15,
+      context: 'dairy_sales',
+      warning: 'No uses Facturas para registrar leche recibida. Usa Control Diario para entregas y cierre mensual para liquidaciones.'
+    },
+    taller: { title: 'Facturas de servicio técnico', subtitle: 'Factura mano de obra, piezas, diagnósticos y servicios terminados.', prefix: 'FT-', dueDays: 7, context: 'service_sales' },
+    camaras: { title: 'Facturas de instalación y equipos', subtitle: 'Factura instalación, equipos, materiales y mantenimiento.', prefix: 'FI-', dueDays: 7, context: 'service_sales' },
+    electricos: { title: 'Facturas de servicios eléctricos', subtitle: 'Factura servicios, materiales, mantenimiento e instalaciones.', prefix: 'FE-', dueDays: 7, context: 'service_sales' },
+    aires: { title: 'Facturas de climatización', subtitle: 'Factura instalación, mantenimiento, piezas y servicios.', prefix: 'FA-', dueDays: 7, context: 'service_sales' },
+    imprenta: { title: 'Facturas de producción', subtitle: 'Factura trabajos impresos, diseños, materiales y entregas.', prefix: 'FP-', dueDays: 7, context: 'retail_sales' },
+    carga: { title: 'Facturas de logística', subtitle: 'Factura fletes, entregas, manejo y servicios de carga.', prefix: 'FC-', dueDays: 15, context: 'service_sales' },
+    suplidor: { title: 'Facturas de suplidor', subtitle: 'Factura productos, servicios y entregas a crédito o contado.', prefix: 'FS-', dueDays: 15, context: 'retail_sales' },
+    general: { title: 'Facturas comerciales', subtitle: 'Convierte cotizaciones aceptadas en cuentas por cobrar simples.', prefix: 'F-', dueDays: 15, context: 'general_sales' }
+  };
+  return profiles[businessType] || profiles.general;
+}
+
+function invoiceStatusLabel(status) {
+  return {
+    draft: 'Borrador',
+    issued: 'Emitida',
+    partially_paid: 'Pagada parcial',
+    paid: 'Pagada',
+    overdue: 'Vencida',
+    void: 'Anulada'
+  }[String(status || 'draft')] || status;
+}
+
+function invoiceStatusBadge(status) {
+  const css = { partially_paid: 'warning', paid: 'accepted', overdue: 'expired', issued: 'sent', void: 'rejected' }[String(status || 'draft')] || status || 'draft';
+  return `<span class="badge ${escapeHtml(css)}">${escapeHtml(invoiceStatusLabel(status))}</span>`;
+}
+
+function normalizeInvoiceItem(item = {}, index = 0) {
+  const quantity = Number(item.quantity || 0);
+  const unit_price = Number(item.unit_price || 0);
+  return {
+    id: item.id || uid('inv_item'),
+    description: String(item.description || '').trim(),
+    quantity,
+    unit_price,
+    total: Number(item.total ?? (quantity * unit_price)),
+    position: Number(item.position ?? index)
+  };
+}
+
+function normalizeInvoicePayment(payment = {}) {
+  return {
+    id: payment.id || uid('pay'),
+    invoice_id: payment.invoice_id || '',
+    payment_date: String(payment.payment_date || todayISO()).slice(0, 10),
+    amount: Number(payment.amount || 0),
+    method: String(payment.method || 'transferencia').trim(),
+    reference: String(payment.reference || '').trim(),
+    notes: String(payment.notes || '').trim(),
+    created_at: payment.created_at || new Date().toISOString()
+  };
+}
+
+function normalizeInvoice(invoice = {}) {
+  const items = (invoice.items || invoice.invoice_items || []).map(normalizeInvoiceItem);
+  const payments = (invoice.payments || invoice.invoice_payments || []).map(normalizeInvoicePayment);
+  return {
+    id: invoice.id || uid('invoice'),
+    company_id: invoice.company_id || state.company?.id || 'local-company',
+    client_id: invoice.client_id || '',
+    quote_id: invoice.quote_id || null,
+    invoice_number: String(invoice.invoice_number || '').trim(),
+    status: String(invoice.status || 'draft'),
+    issue_date: String(invoice.issue_date || todayISO()).slice(0, 10),
+    due_date: String(invoice.due_date || addDaysISO(Number(state.company?.default_invoice_due_days || getBusinessInvoiceProfile().dueDays))).slice(0, 10),
+    currency: String(invoice.currency || state.company?.currency || 'USD').toUpperCase(),
+    tax_rate: Number(invoice.tax_rate ?? state.company?.tax_rate ?? 0),
+    discount_amount: Number(invoice.discount_amount || 0),
+    notes: String(invoice.notes || '').trim(),
+    terms: String(invoice.terms || '').trim(),
+    document_type: String(invoice.document_type || 'commercial_invoice'),
+    fiscal_number: String(invoice.fiscal_number || ''),
+    fiscal_status: String(invoice.fiscal_status || 'not_applicable'),
+    business_context: String(invoice.business_context || getBusinessInvoiceProfile().context),
+    source_type: String(invoice.source_type || (invoice.quote_id ? 'quote' : 'manual')),
+    items,
+    payments,
+    created_at: invoice.created_at || new Date().toISOString(),
+    updated_at: invoice.updated_at || invoice.created_at || new Date().toISOString(),
+    void_reason: invoice.void_reason || ''
+  };
+}
+
+function invoiceTotals(invoice) {
+  const subtotal = (invoice.items || []).reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const discount = Number(invoice.discount_amount || 0);
+  const taxable = Math.max(0, subtotal - discount);
+  const tax = taxable * (Number(invoice.tax_rate || 0) / 100);
+  return { subtotal, discount, taxable, tax, total: taxable + tax };
+}
+
+function invoicePaidAmount(invoice) {
+  return (invoice.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+}
+
+function invoiceBalance(invoice) {
+  return Math.max(0, invoiceTotals(invoice).total - invoicePaidAmount(invoice));
+}
+
+function effectiveInvoiceStatus(invoice) {
+  if (invoice.status === 'void') return 'void';
+  const balance = invoiceBalance(invoice);
+  if (balance <= 0 && invoicePaidAmount(invoice) > 0) return 'paid';
+  if (invoicePaidAmount(invoice) > 0) return 'partially_paid';
+  if (invoice.status !== 'draft' && invoice.due_date && daysBetween(invoice.due_date) < 0) return 'overdue';
+  return invoice.status || 'draft';
+}
+
+function getInvoiceAnalytics() {
+  const invoices = (state.invoices || []).map(inv => ({ ...normalizeInvoice(inv), effectiveStatus: effectiveInvoiceStatus(inv) }));
+  const active = invoices.filter(inv => inv.effectiveStatus !== 'void');
+  const issued = active.filter(inv => inv.effectiveStatus !== 'draft');
+  const overdue = active.filter(inv => inv.effectiveStatus === 'overdue');
+  const totalIssued = issued.reduce((sum, inv) => sum + invoiceTotals(inv).total, 0);
+  const totalPaid = active.reduce((sum, inv) => sum + invoicePaidAmount(inv), 0);
+  const totalReceivable = active.reduce((sum, inv) => sum + invoiceBalance(inv), 0);
+  const draftCount = invoices.filter(inv => inv.effectiveStatus === 'draft').length;
+  return { invoices, active, issued, overdue, totalIssued, totalPaid, totalReceivable, draftCount, issuedCount: issued.length };
+}
+
+function getClientInvoices(clientId) {
+  return (state.invoices || []).filter(inv => String(inv.client_id || '') === String(clientId || '')).map(normalizeInvoice);
+}
+
+function quoteInvoice(quoteId) {
+  return (state.invoices || []).find(inv => String(inv.quote_id || '') === String(quoteId || '') && inv.status !== 'void') || null;
+}
+
+function nextInvoiceNumber() {
+  const profile = getBusinessInvoiceProfile();
+  const prefix = String(state.company?.invoice_prefix || profile.prefix || 'F-').trim();
+  const configuredNext = Math.max(1, Number(state.company?.next_invoice_number || 1));
+  const numericFromExisting = (state.invoices || []).map(inv => {
+    const number = String(inv.invoice_number || '');
+    const match = number.match(/(\d+)$/);
+    return match ? Number(match[1]) : 0;
+  });
+  const maxExisting = Math.max(...numericFromExisting, 0);
+  const next = Math.max(configuredNext, maxExisting + 1);
+  return `${prefix}${String(next).padStart(5, '0')}`;
+}
+
+async function bumpNextInvoiceNumber() {
+  const current = Math.max(1, Number(state.company?.next_invoice_number || 1));
+  const next = current + 1;
+  state.company = { ...state.company, next_invoice_number: next };
+  if (mode === 'local') {
+    saveLocalState();
+    return;
+  }
+  if (mode === 'supabase' && supabaseClient && state.company?.id) {
+    try {
+      await supabaseClient.from('companies').update({ next_invoice_number: next }).eq('id', state.company.id);
+    } catch (error) {
+      console.warn('No se pudo actualizar próximo número de factura en Supabase:', error.message || error);
+    }
+  }
+}
+
+function invoiceWhatsappMessage(invoice) {
+  const client = getClient(invoice.client_id);
+  const company = state.company || defaultCompany;
+  return [
+    `Hola ${client?.name || ''},`,
+    `Te compartimos la factura ${invoice.invoice_number} de ${company.name || 'nuestra empresa'}.`,
+    `Total: ${money(invoiceTotals(invoice).total)}.`,
+    `Saldo pendiente: ${money(invoiceBalance(invoice))}.`,
+    invoice.due_date ? `Vence: ${invoice.due_date}.` : '',
+    'Quedamos atentos.'
+  ].filter(Boolean).join('\n');
+}
+
+async function saveInvoiceToStorage(invoice) {
+  const normalized = normalizeInvoice(invoice);
+  if (mode === 'supabase' && supabaseClient && state.invoiceStorageMode === 'supabase') {
+    const invoicePayload = {
+      company_id: state.company.id,
+      client_id: normalized.client_id || null,
+      quote_id: normalized.quote_id || null,
+      invoice_number: normalized.invoice_number,
+      status: normalized.status,
+      issue_date: normalized.issue_date,
+      due_date: normalized.due_date || null,
+      currency: normalized.currency,
+      tax_rate: normalized.tax_rate,
+      discount_amount: normalized.discount_amount,
+      notes: normalized.notes,
+      terms: normalized.terms,
+      document_type: normalized.document_type,
+      fiscal_number: normalized.fiscal_number || null,
+      fiscal_status: normalized.fiscal_status,
+      business_context: normalized.business_context,
+      source_type: normalized.source_type,
+      updated_at: new Date().toISOString()
+    };
+    const { data, error } = await supabaseClient.from('invoices').insert(invoicePayload).select('*').single();
+    if (error) throw error;
+    const itemsPayload = normalized.items.map((item, index) => ({
+      invoice_id: data.id,
+      description: item.description,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      total: item.total,
+      position: index
+    }));
+    if (itemsPayload.length) {
+      const { error: itemsError } = await supabaseClient.from('invoice_items').insert(itemsPayload);
+      if (itemsError) throw itemsError;
+    }
+    await loadInvoices();
+    return normalizeInvoice({ ...data, items: normalized.items, payments: [] });
+  }
+
+  state.invoices.unshift(normalized);
+  if (mode === 'local') saveLocalState();
+  else saveInvoicesLocalFallback();
+  return normalized;
+}
+
+async function updateInvoiceInStorage(invoice) {
+  const normalized = normalizeInvoice(invoice);
+  if (mode === 'supabase' && supabaseClient && state.invoiceStorageMode === 'supabase') {
+    const { error } = await supabaseClient
+      .from('invoices')
+      .update({
+        status: normalized.status,
+        due_date: normalized.due_date || null,
+        notes: normalized.notes,
+        terms: normalized.terms,
+        void_reason: normalized.void_reason || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', normalized.id);
+    if (error) throw error;
+    await loadInvoices();
+    return;
+  }
+  state.invoices = (state.invoices || []).map(inv => inv.id === normalized.id ? normalized : inv);
+  if (mode === 'local') saveLocalState();
+  else saveInvoicesLocalFallback();
+}
+
+async function convertQuoteToInvoice(quoteId) {
+  if (!requirePermission('invoices_write')) return;
+  const quote = state.quotes.find(q => q.id === quoteId);
+  if (!quote) return;
+  const existing = quoteInvoice(quoteId);
+  if (existing) {
+    toast('Esta cotización ya tiene una factura activa.');
+    setRoute(`invoice-view/${existing.id}`);
+    render();
+    return;
+  }
+  if (!quote.client_id) {
+    toast('La cotización necesita un cliente antes de facturar.');
+    return;
+  }
+  if (!(quote.items || []).length) {
+    toast('La cotización no tiene items para facturar.');
+    return;
+  }
+  const profile = getBusinessInvoiceProfile();
+  const issueDate = todayISO();
+  const dueDays = Number(state.company?.default_invoice_due_days ?? profile.dueDays ?? 15);
+  const invoice = normalizeInvoice({
+    company_id: state.company?.id || 'local-company',
+    client_id: quote.client_id,
+    quote_id: quote.id,
+    invoice_number: nextInvoiceNumber(),
+    status: 'draft',
+    issue_date: issueDate,
+    due_date: addDaysISO(dueDays),
+    currency: quote.currency || state.company?.currency || 'USD',
+    tax_rate: Number(quote.tax_rate ?? state.company?.tax_rate ?? 0),
+    notes: state.company?.default_invoice_notes || defaultCompany.default_invoice_notes,
+    terms: state.company?.default_invoice_terms || '',
+    business_context: profile.context,
+    source_type: 'quote',
+    items: (quote.items || []).map((item, index) => ({ ...item, id: uid('inv_item'), position: index }))
+  });
+  const saved = await saveInvoiceToStorage(invoice);
+  if (quote.status !== 'accepted') {
+    quote.status = 'accepted';
+    quote.accepted_at = quote.accepted_at || new Date().toISOString();
+    if (mode === 'local') saveLocalState();
+    else {
+      try { await supabaseClient.from('quotes').update({ status: 'accepted', accepted_at: quote.accepted_at, updated_at: new Date().toISOString() }).eq('id', quote.id); } catch (_error) {}
+    }
+  }
+  await bumpNextInvoiceNumber();
+  toast('Factura creada en borrador. Revísala antes de emitir.');
+  setRoute(`invoice-view/${saved.id}`);
+  render();
+}
+
+async function issueInvoice(id) {
+  if (!requirePermission('invoices_write')) return;
+  const invoice = state.invoices.find(inv => inv.id === id);
+  if (!invoice) return;
+  if (invoice.status === 'void') return toast('No puedes emitir una factura anulada.');
+  invoice.status = invoiceBalance(invoice) <= 0 && invoicePaidAmount(invoice) > 0 ? 'paid' : 'issued';
+  await updateInvoiceInStorage(invoice);
+  toast('Factura emitida. A partir de ahora debe manejarse por pagos o anulación.');
+  setRoute(`invoice-view/${id}`);
+  render();
+}
+
+async function voidInvoice(id) {
+  if (!requirePermission('invoices_void')) return;
+  const invoice = state.invoices.find(inv => inv.id === id);
+  if (!invoice) return;
+  const reason = prompt('Motivo de anulación:', 'Error en factura / cliente canceló');
+  if (reason === null) return;
+  invoice.status = 'void';
+  invoice.void_reason = reason;
+  await updateInvoiceInStorage(invoice);
+  toast('Factura anulada.');
+  setRoute(`invoice-view/${id}`);
+  render();
+}
+
+async function saveInvoicePayment(form) {
+  if (!requirePermission('invoices_payments')) return;
+  const fd = new FormData(form);
+  const invoiceId = String(fd.get('invoice_id') || '');
+  const invoice = state.invoices.find(inv => inv.id === invoiceId);
+  if (!invoice) return;
+  if (invoice.status === 'void') return toast('No puedes registrar pagos en una factura anulada.');
+  const payment = normalizeInvoicePayment({
+    invoice_id: invoiceId,
+    payment_date: fd.get('payment_date'),
+    amount: Number(fd.get('amount') || 0),
+    method: fd.get('method'),
+    reference: fd.get('reference'),
+    notes: fd.get('notes')
+  });
+  if (payment.amount <= 0) return toast('El pago debe ser mayor que cero.');
+  if (payment.amount > invoiceBalance(invoice) + 0.01) return toast('El pago supera el saldo pendiente.');
+
+  if (mode === 'supabase' && supabaseClient && state.invoiceStorageMode === 'supabase') {
+    const { error } = await supabaseClient.from('invoice_payments').insert({
+      invoice_id: invoiceId,
+      company_id: state.company.id,
+      payment_date: payment.payment_date,
+      amount: payment.amount,
+      method: payment.method,
+      reference: payment.reference,
+      notes: payment.notes
+    });
+    if (error) throw error;
+    await loadInvoices();
+  } else {
+    invoice.payments = [payment, ...(invoice.payments || [])];
+    const status = invoiceBalance(invoice) <= 0 ? 'paid' : invoice.status === 'draft' ? 'draft' : 'partially_paid';
+    invoice.status = status;
+    state.invoices = state.invoices.map(inv => inv.id === invoiceId ? normalizeInvoice(invoice) : inv);
+    if (mode === 'local') saveLocalState();
+    else saveInvoicesLocalFallback();
+  }
+  toast('Pago registrado.');
+  setRoute(`invoice-view/${invoiceId}`);
+  render();
+}
+
+async function copyInvoiceWhatsapp(id) {
+  const invoice = state.invoices.find(inv => inv.id === id);
+  if (!invoice) return;
+  await navigator.clipboard.writeText(invoiceWhatsappMessage(invoice));
+  toast('Mensaje de factura copiado.');
+}
+
+function renderInvoiceIntelligenceCard() {
+  const profile = getBusinessInvoiceProfile();
+  const stats = getInvoiceAnalytics();
+  const warnings = [];
+  if (state.company?.business_type === 'asociacion_ganaderos') warnings.push(profile.warning);
+  if (stats.overdue.length) warnings.push(`${stats.overdue.length} factura(s) están vencidas. Prioriza cobro antes de emitir más crédito.`);
+  if (!state.company?.invoice_prefix) warnings.push('Configura prefijo y próximo número en Configuración > Empresa para mantener orden interno.');
+  return `
+    <section class="card insight info" style="margin-bottom:18px;">
+      <strong>${escapeHtml(profile.title)}</strong>
+      <span>${escapeHtml(profile.subtitle)}</span>
+      ${warnings.length ? `<div class="mini-list">${warnings.map(w => `<span>${escapeHtml(w)}</span>`).join('')}</div>` : ''}
+    </section>
+  `;
+}
+
+function renderInvoices() {
+  const stats = getInvoiceAnalytics();
+  const invoices = stats.invoices.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Facturas</h1>
+        <p>Convierte cotizaciones en facturas comerciales, registra pagos y controla saldos pendientes.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-route="quotes">Facturar desde cotización</button>
+      </div>
+    </div>
+    ${renderInvoiceIntelligenceCard()}
+    <section class="grid cols-4">
+      <div class="card metric"><span>Emitidas</span><strong>${stats.issuedCount}</strong></div>
+      <div class="card metric"><span>Borradores</span><strong>${stats.draftCount}</strong></div>
+      <div class="card metric"><span>Cuentas por cobrar</span><strong>${money(stats.totalReceivable)}</strong></div>
+      <div class="card metric"><span>Cobrado</span><strong>${money(stats.totalPaid)}</strong></div>
+    </section>
+    <section class="card" style="margin-top:18px;">
+      ${invoices.length ? renderInvoicesTable(invoices) : `<div class="empty">No hay facturas todavía. Abre una cotización aceptada o enviada y presiona “Convertir en factura”.</div>`}
+    </section>
+  `;
+}
+
+function renderInvoicesTable(invoices) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Número</th><th>Cliente</th><th>Estado</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Vence</th><th>Acciones</th></tr></thead>
+        <tbody>
+          ${invoices.map(invoice => {
+            const client = getClient(invoice.client_id);
+            const totals = invoiceTotals(invoice);
+            const paid = invoicePaidAmount(invoice);
+            const balance = invoiceBalance(invoice);
+            const status = effectiveInvoiceStatus(invoice);
+            return `
+              <tr class="${status === 'overdue' ? 'row-warning' : ''}">
+                <td><strong>${escapeHtml(invoice.invoice_number)}</strong><br><span class="help">${escapeHtml(invoice.issue_date)}</span></td>
+                <td>${escapeHtml(client?.name || 'Sin cliente')}</td>
+                <td>${invoiceStatusBadge(status)}</td>
+                <td>${money(totals.total)}</td>
+                <td>${money(paid)}</td>
+                <td>${money(balance)}</td>
+                <td>${escapeHtml(invoice.due_date || '')}</td>
+                <td class="actions"><button class="btn secondary small" data-route="invoice-view/${invoice.id}">Ver</button><button class="btn secondary small" data-action="invoice-pdf" data-id="${invoice.id}">PDF</button></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderInvoiceView(id) {
+  const invoice = normalizeInvoice(state.invoices.find(inv => inv.id === id));
+  if (!invoice?.id || !state.invoices.find(inv => inv.id === id)) return `<div class="empty">Factura no encontrada.</div>`;
+  const client = getClient(invoice.client_id);
+  const quote = state.quotes.find(q => q.id === invoice.quote_id);
+  const totals = invoiceTotals(invoice);
+  const paid = invoicePaidAmount(invoice);
+  const balance = invoiceBalance(invoice);
+  const effectiveStatus = effectiveInvoiceStatus(invoice);
+  const canPay = can('invoices_payments') && invoice.status !== 'void' && balance > 0 && invoice.status !== 'draft';
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Factura ${escapeHtml(invoice.invoice_number)}</h1>
+        <p>${escapeHtml(client?.name || 'Sin cliente')} · ${invoiceStatusBadge(effectiveStatus)}</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-route="invoices">Volver</button>
+        <button class="btn secondary" data-action="invoice-pdf" data-id="${invoice.id}">PDF</button>
+        <button class="btn secondary" data-action="copy-invoice-whatsapp" data-id="${invoice.id}">WhatsApp</button>
+        ${invoice.status === 'draft' && can('invoices_write') ? `<button class="btn primary" data-action="issue-invoice" data-id="${invoice.id}">Emitir</button>` : ''}
+        ${invoice.status !== 'void' && can('invoices_void') ? `<button class="btn danger" data-action="void-invoice" data-id="${invoice.id}">Anular</button>` : ''}
+      </div>
+    </div>
+
+    <section class="grid cols-4">
+      <div class="card metric"><span>Total</span><strong>${money(totals.total)}</strong></div>
+      <div class="card metric"><span>Pagado</span><strong>${money(paid)}</strong></div>
+      <div class="card metric"><span>Saldo</span><strong>${money(balance)}</strong></div>
+      <div class="card metric"><span>Vence</span><strong>${escapeHtml(invoice.due_date || '-')}</strong></div>
+    </section>
+
+    ${state.company?.business_type === 'asociacion_ganaderos' ? `<section class="card insight warning" style="margin-top:18px;"><strong>Regla ganadera</strong><span>Esta factura representa ventas de insumos/servicios. La leche recibida y el pago al productor se manejan por Control Diario y liquidación mensual.</span></section>` : ''}
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Detalle</h2>
+      <div class="summary-line"><span>Cliente</span><strong>${escapeHtml(client?.name || '')}</strong></div>
+      <div class="summary-line"><span>Cotización origen</span><strong>${quote ? escapeHtml(quote.quote_number) : 'Manual / sin cotización'}</strong></div>
+      <div class="summary-line"><span>Tipo</span><strong>Factura comercial interna</strong></div>
+      <div class="summary-line"><span>Fiscal</span><strong>${invoice.fiscal_number ? escapeHtml(invoice.fiscal_number) : 'No fiscal / preparado para NCF-eCF futuro'}</strong></div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Items</h2>
+      <div class="table-wrap compact-table"><table><thead><tr><th>Descripción</th><th>Cantidad</th><th>Precio</th><th>Total</th></tr></thead><tbody>
+        ${invoice.items.map(item => `<tr><td>${escapeHtml(item.description)}</td><td>${numberFmt(item.quantity)}</td><td>${money(item.unit_price)}</td><td>${money(item.total)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="totals-box">
+        <div><span>Subtotal</span><strong>${money(totals.subtotal)}</strong></div>
+        <div><span>Descuento</span><strong>${money(totals.discount)}</strong></div>
+        <div><span>Impuesto</span><strong>${money(totals.tax)}</strong></div>
+        <div><span>Total</span><strong>${money(totals.total)}</strong></div>
+      </div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px;">
+      <div class="card">
+        <h2>Pagos</h2>
+        ${invoice.payments.length ? renderInvoicePaymentsTable(invoice.payments) : `<div class="empty">Sin pagos registrados.</div>`}
+      </div>
+      <div class="card">
+        <h2>Registrar pago</h2>
+        ${canPay ? renderInvoicePaymentForm(invoice, balance) : `<div class="empty">${invoice.status === 'draft' ? 'Emite la factura antes de registrar pagos.' : 'No hay saldo pendiente o no tienes permiso.'}</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderInvoicePaymentsTable(payments) {
+  return `
+    <div class="table-wrap compact-table"><table><thead><tr><th>Fecha</th><th>Monto</th><th>Método</th><th>Referencia</th></tr></thead><tbody>
+      ${payments.map(payment => `<tr><td>${escapeHtml(payment.payment_date)}</td><td>${money(payment.amount)}</td><td>${escapeHtml(payment.method)}</td><td>${escapeHtml(payment.reference || '-')}</td></tr>`).join('')}
+    </tbody></table></div>
+  `;
+}
+
+function renderInvoicePaymentForm(invoice, balance) {
+  return `
+    <form data-form="invoice-payment" class="form-grid one">
+      <input type="hidden" name="invoice_id" value="${escapeHtml(invoice.id)}" />
+      <div class="field"><label>Fecha</label><input name="payment_date" type="date" value="${todayISO()}" required /></div>
+      <div class="field"><label>Monto</label><input name="amount" type="number" min="0.01" step="0.01" max="${balance}" value="${balance.toFixed(2)}" required /></div>
+      <div class="field"><label>Método</label><select name="method"><option value="efectivo">Efectivo</option><option value="transferencia" selected>Transferencia</option><option value="tarjeta">Tarjeta</option><option value="cheque">Cheque</option><option value="otro">Otro</option></select></div>
+      <div class="field"><label>Referencia</label><input name="reference" placeholder="No. transferencia, recibo, cheque" /></div>
+      <div class="field"><label>Nota</label><textarea name="notes" placeholder="Opcional"></textarea></div>
+      <button class="btn primary" type="submit">Guardar pago</button>
+    </form>
+  `;
+}
+
+function generateInvoicePdf(id) {
+  const invoice = normalizeInvoice(state.invoices.find(inv => inv.id === id));
+  if (!invoice || !state.invoices.find(inv => inv.id === id)) return;
+  if (!window.jspdf?.jsPDF) {
+    toast('jsPDF no está disponible. Revisa tu conexión.');
+    return;
+  }
+  const client = getClient(invoice.client_id);
+  const totals = invoiceTotals(invoice);
+  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+  const left = 44;
+  const right = 568;
+  const company = state.company || defaultCompany;
+  let y = 48;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text(company.name || 'CotizaFlow', left, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  y += 16;
+  doc.text(`${company.tax_id || ''}  ${company.email || ''}  ${company.phone || ''}`, left, y);
+  if (company.address) {
+    y += 13;
+    doc.text(doc.splitTextToSize(company.address, 300), left, y);
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('FACTURA COMERCIAL', 400, 48);
+  doc.setFontSize(10);
+  doc.text(invoice.invoice_number || '', 400, 65);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Estado: ${invoiceStatusLabel(effectiveInvoiceStatus(invoice))}`, 400, 82);
+  doc.text(`Emisión: ${invoice.issue_date || ''}`, 400, 99);
+  doc.text(`Vence: ${invoice.due_date || ''}`, 400, 116);
+  y = 140;
+  doc.line(left, y, right, y);
+  y += 28;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Cliente', left, y);
+  doc.setFont('helvetica', 'normal');
+  y += 16;
+  doc.text(client?.name || '', left, y);
+  y += 14;
+  doc.text(client?.email || '', left, y);
+  y += 14;
+  doc.text(client?.phone || '', left, y);
+  y += 28;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Descripción', left, y);
+  doc.text('Cant.', 350, y);
+  doc.text('Precio', 410, y);
+  doc.text('Total', 500, y);
+  y += 8;
+  doc.line(left, y, right, y);
+  y += 18;
+  doc.setFont('helvetica', 'normal');
+  invoice.items.forEach(item => {
+    const description = doc.splitTextToSize(item.description || '', 285);
+    doc.text(description, left, y);
+    doc.text(String(Number(item.quantity || 0)), 350, y);
+    doc.text(money(item.unit_price), 410, y);
+    doc.text(money(item.total), 500, y);
+    y += Math.max(18, description.length * 12 + 8);
+    if (y > 680) { doc.addPage(); y = 48; }
+  });
+  y += 8;
+  doc.line(360, y, right, y);
+  y += 18;
+  doc.text('Subtotal', 410, y); doc.text(money(totals.subtotal), 500, y);
+  y += 16;
+  doc.text('Descuento', 410, y); doc.text(money(totals.discount), 500, y);
+  y += 16;
+  doc.text('Impuesto', 410, y); doc.text(money(totals.tax), 500, y);
+  y += 18;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Total', 410, y); doc.text(money(totals.total), 500, y);
+  y += 18;
+  doc.text('Pagado', 410, y); doc.text(money(invoicePaidAmount(invoice)), 500, y);
+  y += 18;
+  doc.text('Saldo', 410, y); doc.text(money(invoiceBalance(invoice)), 500, y);
+  const footerText = [invoice.notes || '', invoice.terms ? `Términos: ${invoice.terms}` : '', 'Documento comercial interno. Preparado para integración fiscal futura.'].filter(Boolean).join('\n\n');
+  if (footerText) {
+    y += 34;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(doc.splitTextToSize(footerText, 500), left, y);
+  }
+  doc.save(`${invoice.invoice_number || 'factura'}.pdf`);
+}
+
+
 function renderQuotes() {
   return `
     <div class="page-header">
@@ -2138,6 +2855,7 @@ function renderQuotesTable(quotes, compact = false) {
                     <button class="btn secondary small" data-route="quote-view/${quote.id}">Ver</button>
                     ${can('quotes_write') ? `<button class="btn secondary small" data-route="quote-edit/${quote.id}">Editar</button>` : ''}
                     <button class="btn secondary small" data-action="pdf" data-id="${quote.id}">PDF</button>
+                    ${can('invoices_write') ? `<button class="btn secondary small" data-action="convert-quote-invoice" data-id="${quote.id}">Facturar</button>` : ''}
                     ${can('quotes_delete') ? `<button class="btn danger small" data-action="delete-quote" data-id="${quote.id}">Borrar</button>` : ''}
                   </td>
                 `}
@@ -2196,10 +2914,13 @@ function getClientStats(client) {
   const lastQuote = [...quotes].sort((a, b) => quoteCreatedTime(b) - quoteCreatedTime(a))[0] || null;
   const lastFollowup = getClientLastFollowup(client.id);
   const lastActivityAt = lastFollowup?.created_at || lastQuote?.updated_at || lastQuote?.created_at || client.updated_at || client.created_at;
+  const invoices = getClientInvoices(client.id);
+  const invoiceOpenBalance = invoices.reduce((sum, inv) => sum + invoiceBalance(inv), 0);
+  const invoicePaid = invoices.reduce((sum, inv) => sum + invoicePaidAmount(inv), 0);
   const milkRecords = milkClientRecords(client);
   const milkLiters = milkRecords.reduce((sum, record) => sum + Number(record.liters || 0), 0);
   const milkNet = milkRecords.reduce((sum, record) => sum + Number(record.net_amount || 0), 0);
-  return { quotes, totalQuoted, accepted, totalAccepted, pending, expired, lastQuote, lastFollowup, lastActivityAt, milkRecords, milkLiters, milkNet };
+  return { quotes, totalQuoted, accepted, totalAccepted, pending, expired, lastQuote, lastFollowup, lastActivityAt, invoices, invoiceOpenBalance, invoicePaid, milkRecords, milkLiters, milkNet };
 }
 
 function getFilteredClients() {
@@ -2320,6 +3041,7 @@ function renderClientCrmTable(clients) {
                     ${can('quotes_write') ? `<button class="btn secondary small" data-route="quote-new" data-prefill-client="${client.id}">Cotizar</button>` : ''}
                     ${state.company?.business_type === 'asociacion_ganaderos' && can('milk_write') ? `<button class="btn secondary small" data-route="milk" data-prefill-milk-client="${client.id}">Control Diario</button>` : ''}
                     ${stats.lastQuote ? `<button class="btn secondary small" data-route="quote-view/${stats.lastQuote.id}">Ver última</button>` : ''}
+                    ${can('invoices_read') && stats.invoices.length ? `<button class="btn secondary small" data-route="invoices">Facturas: ${stats.invoices.length}</button>` : ''}
                     ${can('clients_delete') ? `<button class="btn danger small" data-action="delete-client" data-id="${client.id}">Borrar</button>` : ''}
                   </div>
                 </td>
@@ -2621,6 +3343,9 @@ function renderSettings() {
           </select>
         </div>
         <div class="field"><label>Impuesto %</label><input name="tax_rate" type="number" step="0.01" min="0" value="${escapeHtml(c.tax_rate)}" /></div>
+        <div class="field"><label>Prefijo factura</label><input name="invoice_prefix" value="${escapeHtml(c.invoice_prefix || getBusinessInvoiceProfile().prefix)}" /></div>
+        <div class="field"><label>Próximo número factura</label><input name="next_invoice_number" type="number" min="1" step="1" value="${escapeHtml(c.next_invoice_number || 1)}" /></div>
+        <div class="field"><label>Días de vencimiento factura</label><input name="default_invoice_due_days" type="number" min="0" step="1" value="${escapeHtml(c.default_invoice_due_days ?? getBusinessInvoiceProfile().dueDays)}" /></div>
         <div class="field"><label>Tipo de negocio</label>
           <select name="business_type">
             ${businessTypeOptions(c.business_type)}
@@ -2659,6 +3384,8 @@ function renderSettings() {
         </div>
         <div class="field" style="grid-column:1/-1;"><label>Dirección</label><textarea name="address">${escapeHtml(c.address)}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en cotizaciones</label><textarea name="default_quote_notes">${escapeHtml(c.default_quote_notes || defaultCompany.default_quote_notes)}</textarea></div>
+        <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en facturas</label><textarea name="default_invoice_notes">${escapeHtml(c.default_invoice_notes || defaultCompany.default_invoice_notes)}</textarea></div>
+        <div class="field" style="grid-column:1/-1;"><label>Términos por defecto en facturas</label><textarea name="default_invoice_terms" placeholder="Ej.: Pago contra entrega, transferencia bancaria, crédito 15 días.">${escapeHtml(c.default_invoice_terms || '')}</textarea><p class="help">Fase 9 maneja factura comercial interna / cuenta por cobrar. NCF/e-CF fiscal queda preparado para una fase con backend seguro.</p></div>
         <div class="field" style="grid-column:1/-1;"><label>Términos y condiciones por defecto</label><textarea name="default_terms" placeholder="Opcional">${escapeHtml(c.default_terms || '')}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Mensaje WhatsApp por defecto</label><textarea name="default_whatsapp_template" placeholder="Usa variables: {{client_name}}, {{quote_number}}, {{quote_total}}, {{public_link}}, {{company_name}}">${escapeHtml(c.default_whatsapp_template || '')}</textarea></div>
         <button class="btn primary" type="submit">${escapeHtml(t('saveSettings'))}</button>
@@ -2822,6 +3549,7 @@ function renderQuoteView(id) {
       <div class="header-actions">
         <button class="btn secondary" data-route="quotes">Volver</button>
         <button class="btn secondary" data-route="quote-edit/${quote.id}">Editar</button>
+        ${can('invoices_write') ? `<button class="btn primary" data-action="convert-quote-invoice" data-id="${quote.id}">Convertir en factura</button>` : ''}
         <button class="btn primary" data-action="pdf" data-id="${quote.id}">PDF</button>
       </div>
     </div>
@@ -3930,6 +4658,12 @@ async function saveCompany(form) {
     default_quote_notes: String(fd.get('default_quote_notes') || '').trim(),
     default_terms: String(fd.get('default_terms') || '').trim(),
     default_whatsapp_template: String(fd.get('default_whatsapp_template') || '').trim(),
+    invoice_prefix: String(fd.get('invoice_prefix') || getBusinessInvoiceProfile(nextBusinessType).prefix || 'F-').trim(),
+    next_invoice_number: Math.max(1, Number(fd.get('next_invoice_number') || 1)),
+    default_invoice_due_days: Math.max(0, Number(fd.get('default_invoice_due_days') || getBusinessInvoiceProfile(nextBusinessType).dueDays || 15)),
+    default_invoice_notes: String(fd.get('default_invoice_notes') || '').trim(),
+    default_invoice_terms: String(fd.get('default_invoice_terms') || '').trim(),
+    invoice_fiscal_mode: 'commercial_internal',
     logo_data_url: String(fd.get('logo_data_url') || '').trim(),
     logo_position: ['left','center','right'].includes(String(fd.get('logo_position') || 'right')) ? String(fd.get('logo_position') || 'right') : 'right'
   };
@@ -3938,6 +4672,8 @@ async function saveCompany(form) {
 
   if (mode === 'supabase') {
     const fullPayload = { ...payload, ...dairyFields };
+    const fallbackCompanyPayload = { ...payload };
+    ['invoice_prefix','next_invoice_number','default_invoice_due_days','default_invoice_notes','default_invoice_terms','invoice_fiscal_mode','default_milk_price_per_liter','default_milk_commission_rate'].forEach(key => delete fallbackCompanyPayload[key]);
     let result = await supabaseClient
       .from('companies')
       .update(fullPayload)
@@ -3947,11 +4683,11 @@ async function saveCompany(form) {
 
     if (result.error) {
       const message = String(result.error.message || '').toLowerCase();
-      if (message.includes('default_milk') || message.includes('column')) {
-        console.warn('Las columnas ganaderas no existen en companies. Ejecuta schema_phase8b_dairy_crm_settings.sql para guardarlas en Supabase.');
+      if (message.includes('default_milk') || message.includes('invoice_') || message.includes('next_invoice') || message.includes('column')) {
+        console.warn('Columnas nuevas de empresa pendientes. Ejecuta schema_phase8b y schema_phase9 para guardar todo en Supabase.');
         result = await supabaseClient
           .from('companies')
-          .update(payload)
+          .update(fallbackCompanyPayload)
           .eq('id', state.company.id)
           .select('*')
           .single();
@@ -3959,7 +4695,7 @@ async function saveCompany(form) {
     }
 
     if (result.error) throw result.error;
-    state.company = { ...normalizeCompany(result.data), ...dairyFields, theme_preference: themePreference };
+    state.company = { ...normalizeCompany(result.data), ...payload, ...dairyFields, theme_preference: themePreference };
   } else {
     state.company = { ...state.company, ...payload, ...dairyFields, theme_preference: themePreference };
     saveLocalState();
@@ -4782,6 +5518,11 @@ app.addEventListener('click', async (event) => {
     if (action === 'delete-milk-record') await deleteMilkRecord(id);
     if (action === 'milk-pdf') generateMilkPdf();
     if (action === 'milk-csv') exportMilkCsv();
+    if (action === 'convert-quote-invoice') await convertQuoteToInvoice(id);
+    if (action === 'issue-invoice') await issueInvoice(id);
+    if (action === 'void-invoice') await voidInvoice(id);
+    if (action === 'invoice-pdf') generateInvoicePdf(id);
+    if (action === 'copy-invoice-whatsapp') await copyInvoiceWhatsapp(id);
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
   } catch (error) {
     console.error(error);
@@ -4806,6 +5547,7 @@ app.addEventListener('submit', async (event) => {
     if (type === 'message-template') await saveMessageTemplate(form);
     if (type === 'team-member') await saveTeamMember(form);
     if (type === 'milk-delivery') await saveMilkDelivery(form);
+    if (type === 'invoice-payment') await saveInvoicePayment(form);
     if (type === 'milk-filters') handleMilkFilters(form);
     if (type === 'report-filters') handleReportFilters(form);
     if (type === 'client-filters') handleClientFilters(form);

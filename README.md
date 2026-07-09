@@ -1,66 +1,73 @@
-# CotizaFlow — Fase 8D
+# CotizaFlow — Fase 9
 
-Fase 8D mantiene las mejoras de Fase 8C y agrega dos piezas nuevas: catálogo específico para Asociación Ganaderos y base de roles por usuario con Superusuario.
+Fase 9 agrega un módulo de **Facturas comerciales y cuentas por cobrar** conectado con Cotizaciones, Clientes, roles y Dashboard. El objetivo es mantener el CRM sencillo, pero más útil: cliente → cotización → factura → pago → historial.
 
 ## Incluye
 
-- CRM de clientes con estado comercial, etiquetas, notas internas e historial calculado.
-- Control Diario ganadero conectado al CRM de clientes/productores.
-- Dashboard especial para Asociación Ganaderos.
-- Selector de idioma: Español / Inglés.
-- Tema visual White / Black desde Configuración > Empresa.
-- Navegación lateral más limpia: Dashboard, Seguimiento, Control Diario, Cotizaciones, CRM clientes, Catálogo, Plantillas y Configuración.
-- Nueva cotización solo desde el módulo Cotizaciones.
-- Uso mensual del plan dentro de Configuración > Planes y pagos.
-- Precio por litro y % comisión asociación visibles solo cuando el tipo de negocio es Asociación Ganaderos.
+- Módulo **Facturas** en el menú principal.
+- Conversión de cotización a factura.
+- Factura en estado borrador antes de emitir.
+- Emisión de factura comercial interna.
+- Registro de pagos y abonos.
+- Saldo pendiente automático.
+- Estados: borrador, emitida, pagada parcial, pagada, vencida y anulada.
+- PDF de factura.
+- Mensaje listo para WhatsApp.
+- Historial de facturas por cliente.
+- Métricas de facturas en Dashboard.
+- Configuración de prefijo, próximo número, vencimiento y notas de factura.
+- Base de datos preparada para NCF/e-CF futuro, sin exponer llaves secretas.
 
-## Cambios Fase 8D
+## Inteligencia por tipo de negocio
 
-### Catálogo Asociación Ganaderos
+El sistema adapta el texto, las alertas y el contexto de facturación según el tipo de negocio.
 
-Al cargar plantilla para Asociación Ganaderos se insertan productos y servicios base como:
+Para **Asociación Ganaderos**, las facturas se manejan como ventas de insumos y servicios: alimento, medicamentos, transporte, servicios veterinarios, gestión administrativa, etc. La llegada de leche no se registra como factura; se mantiene en **Control Diario** y se liquidará aparte en una fase posterior.
 
-- Alimento concentrado para ganado.
-- Melaza para ganado.
-- Sal mineralizada.
-- Vitaminas y reconstituyentes.
-- Desparasitante bovino.
-- Vacuna bovina.
-- Servicio veterinario.
-- Inseminación artificial.
-- Transporte de leche.
-- Análisis de calidad de leche.
-- Tanques, cubetas y accesorios de ordeño.
-- Detergentes y productos de higiene.
-- Gestión administrativa de la asociación.
+Esto evita mezclar cuentas por cobrar de ventas con cuentas por pagar a productores.
 
-La carga evita duplicados por categoría + nombre.
+## Flujo recomendado
 
-### Usuarios y roles
+1. Crear cliente.
+2. Crear cotización.
+3. Cuando el cliente acepta, abrir la cotización.
+4. Presionar **Convertir en factura**.
+5. Revisar la factura en borrador.
+6. Presionar **Emitir**.
+7. Registrar pagos o abonos.
+8. Revisar saldo pendiente y vencimientos.
 
-Se agregó Configuración > Usuarios y roles.
+## Reglas de buenas prácticas incluidas
 
-Roles disponibles:
+- Una factura nace como borrador.
+- Una factura emitida no debe tratarse como una cotización editable.
+- Si hay error, se anula en lugar de borrarla.
+- La factura conserva copia propia de items, precios, impuestos y totales.
+- El PDF indica que es documento comercial interno.
+- La fiscalidad NCF/e-CF queda preparada para una fase posterior con backend seguro.
+
+## Roles
 
 - Superusuario: acceso total.
-- Administrador: operación completa, configuración funcional y usuarios.
-- Ventas: clientes, cotizaciones, seguimiento y catálogo en modo operativo.
-- Operador diario: Control Diario y productores/clientes.
-- Contabilidad: reportes, pagos mensuales, Control Diario y planes.
-- Solo lectura: consulta sin edición.
-
-El propietario de la empresa queda como Superusuario. Para otros usuarios, se registra su correo y rol. El usuario debe crear cuenta con ese mismo correo para quedar vinculado a la empresa.
+- Administrador: facturas, pagos, configuración, clientes y operación.
+- Ventas: puede crear facturas desde cotizaciones.
+- Contabilidad: puede emitir, anular y registrar pagos.
+- Operador diario: mantiene Control Diario, sin permisos completos de facturación.
+- Solo lectura: consulta facturas sin editar.
 
 ## Orden de instalación recomendado
 
 1. Mantén tu `config.js` real. No lo reemplaces por uno vacío.
 2. Reemplaza `index.html`, `app.js`, `styles.css`, `public.html` y `README.md`.
-3. Si no has ejecutado las migraciones ganaderas, ejecuta en Supabase SQL Editor:
+3. Si no has ejecutado las migraciones ganaderas, ejecuta:
    - `supabase/schema_phase8b_dairy_crm_settings.sql`
-4. Luego ejecuta:
+4. Si no has ejecutado roles/catálogo, ejecuta:
    - `supabase/schema_phase8d_roles_catalog.sql`
-5. Sube los archivos a GitHub Pages.
-6. Entra con el usuario propietario y revisa Configuración > Usuarios y roles.
+5. Ejecuta la nueva migración:
+   - `supabase/schema_phase9_invoices.sql`
+6. Sube los archivos a GitHub Pages.
+7. Haz `Ctrl + F5` en el navegador.
+8. Prueba convertir una cotización en factura.
 
 ## Archivos principales actualizados
 
@@ -68,35 +75,13 @@ El propietario de la empresa queda como Superusuario. Para otros usuarios, se re
 - `app.js`
 - `styles.css`
 - `public.html`
-- `supabase/schema_phase8_dairy.sql`
-- `supabase/schema_phase8b_dairy_crm_settings.sql`
-- `supabase/schema_phase8d_roles_catalog.sql`
+- `README.md`
+- `supabase/schema_phase9_invoices.sql`
 
-## Persistencia del Control Diario
+## Nota fiscal
 
-- Si existe la tabla `milk_deliveries`, el módulo guarda en Supabase.
-- Si la tabla no existe, el módulo funciona con fallback local para no romper la app.
-- La migración ganadera agrega `default_milk_price_per_liter` y `default_milk_commission_rate` a `companies`, y `client_id` a `milk_deliveries`.
+Fase 9 maneja factura comercial interna y cuentas por cobrar. No declara todavía cumplimiento fiscal oficial DGII/e-CF. Para eso se requiere una fase fiscal con NCF/e-NCF, secuencias, validaciones y backend seguro mediante Supabase Edge Functions o Cloudflare Workers. No debe colocarse `service_role` ni llaves secretas en frontend o GitHub.
 
-## Nota de seguridad
+## Seguridad
 
-El frontend sigue usando solo la Publishable key de Supabase. No debe subirse `service_role`, secret keys de Supabase, Lemon Squeezy, Paddle ni Resend a GitHub.
-
-
-## Fase 8E - Autenticación, recuperación y roles
-
-Esta versión corrige el flujo de acceso y agrega recuperación de contraseña desde la pantalla pública.
-
-Cambios principales:
-
-- Nueva pestaña **Olvidé contraseña** en el login.
-- Envío de correo de recuperación usando Supabase Auth.
-- Soporte para enlace de recuperación: al abrir el enlace, la app muestra el formulario para crear nueva contraseña.
-- Soporte para código temporal/OTP: el usuario puede pegar el código recibido y definir una nueva contraseña.
-- Mensajes de error de login más claros, especialmente para credenciales incorrectas, correo no confirmado o registro desactivado.
-- En **Configuración > Usuarios y roles**, se agregó botón **Enviar acceso** para reenviar recuperación a usuarios existentes en Supabase Auth.
-- Al guardar un usuario/rol, se puede marcar **Enviar correo de recuperación/activación al guardar**.
-
-Importante: crear un usuario en **Usuarios y roles** define su rol dentro de la empresa, pero no crea una cuenta de Supabase Auth desde el navegador. Para entrar, ese correo debe crear cuenta en la pantalla pública o existir en Supabase Auth y usar recuperación de contraseña. Crear cuentas Auth directamente desde un superusuario requiere una Edge Function o Worker con service_role, nunca exponer esa llave en frontend.
-
-Ver también: `supabase/auth_recovery_email_template.md`.
+El frontend sigue usando solo la Publishable key de Supabase. Las operaciones sensibles futuras, como emitir comprobantes fiscales oficiales, webhooks de pagos o creación administrativa de usuarios Auth, deben ir por backend seguro.
