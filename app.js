@@ -9,13 +9,75 @@ const DAIRY_SETTINGS_STORAGE_KEY = 'cotizaflow_dairy_settings_v1';
 const INVOICE_FALLBACK_STORAGE_KEY = 'cotizaflow_invoices_fallback_v1';
 
 const PLAN_CATALOG = {
-  free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, catalogLimit: 10, description: 'Prueba limitada para validar el producto.' },
-  starter: { name: 'Starter', price: 9, quoteLimit: 50, users: 1, catalogLimit: 50, description: 'Para negocios pequeños que cotizan con frecuencia moderada.' },
-  enterprise: { name: 'Enterprise', price: 39, quoteLimit: 500, users: 3, catalogLimit: 500, description: 'Mayor volumen, equipo pequeño, plantillas y reportes.' },
-  custom: { name: 'A cotizar', price: null, quoteLimit: 500, users: 10, catalogLimit: 1000, description: 'Para empresas con alto volumen, múltiples usuarios o necesidades especiales.' }
+  demo: {
+    name: 'Demo', price: 0, currency: 'DOP', priceLabel: 'Prueba', quoteLimit: 5, maxQuotesPerMonth: 5, maxClients: 5, maxInvoicesPerMonth: 2, maxExportsPerMonth: 0, users: 1, catalogLimit: 10,
+    setupLabel: 'Sin setup', upgradeLabel: 'CRM Básico',
+    description: 'Prueba controlada con límites fuertes. No está pensado para operar una empresa real.',
+    features: ['crm_core','dashboard_basic','clients','quotes','quote_pdf','follow_up','catalog','invoices','company_branding'],
+    lockedPdfWatermark: true
+  },
+  crm_basico: {
+    name: 'CRM Básico', price: 2900, currency: 'DOP', priceLabel: 'RD$2,900', quoteLimit: 50, maxQuotesPerMonth: 50, maxClients: 100, maxInvoicesPerMonth: 20, maxExportsPerMonth: 0, users: 2, catalogLimit: 100,
+    setupLabel: 'Setup básico desde RD$5,000', upgradeLabel: 'CRM Pro',
+    description: 'Para negocios pequeños que necesitan clientes, cotizaciones, seguimiento y facturas comerciales simples.',
+    features: ['crm_core','dashboard_basic','clients','quotes','quote_pdf','follow_up','catalog','invoices','company_branding','whatsapp_templates','roles_basic']
+  },
+  crm_pro: {
+    name: 'CRM Pro', price: 6900, currency: 'DOP', priceLabel: 'RD$6,900', quoteLimit: 500, maxQuotesPerMonth: 500, maxClients: 10000, maxInvoicesPerMonth: 500, maxExportsPerMonth: 100, users: 5, catalogLimit: 500,
+    setupLabel: 'Setup Pro desde RD$12,000', upgradeLabel: 'CRM Empresa',
+    description: 'Plan principal: cotizaciones, facturas comerciales, pagos parciales, cuentas por cobrar, roles y reportes.',
+    features: ['crm_core','dashboard_basic','dashboard_advanced','clients','quotes','quote_pdf','follow_up','catalog','invoices','partial_payments','accounts_receivable','roles_basic','roles_advanced','whatsapp_templates','exports_csv','exports_pdf','company_branding','referrals','billing_settings']
+  },
+  ganadero_pro: {
+    name: 'Ganadero Pro', price: 12900, currency: 'DOP', priceLabel: 'RD$12,900', quoteLimit: 500, maxQuotesPerMonth: 500, maxClients: 10000, maxInvoicesPerMonth: 500, maxExportsPerMonth: 200, users: 5, catalogLimit: 700,
+    setupLabel: 'Implementación ganadera desde RD$25,000', upgradeLabel: 'CRM Empresa',
+    description: 'CRM Pro más control diario de leche, productores, comisiones, resumen mensual, PDF y CSV ganadero.',
+    features: ['crm_core','dashboard_basic','dashboard_advanced','clients','quotes','quote_pdf','follow_up','catalog','invoices','partial_payments','accounts_receivable','roles_basic','roles_advanced','whatsapp_templates','exports_csv','exports_pdf','company_branding','referrals','billing_settings','ganadero_module','ganadero_daily_control','ganadero_monthly_summary','ganadero_pdf','ganadero_csv']
+  },
+  crm_empresa: {
+    name: 'CRM Empresa', price: null, currency: 'DOP', priceLabel: 'Personalizado', quoteLimit: 999999, maxQuotesPerMonth: 999999, maxClients: 999999, maxInvoicesPerMonth: 999999, maxExportsPerMonth: 999999, users: 25, catalogLimit: 5000,
+    setupLabel: 'Setup personalizado desde RD$25,000', upgradeLabel: 'Contactar ventas',
+    description: 'Para múltiples usuarios, varias empresas/sucursales, reportes personalizados e integraciones.',
+    features: ['crm_core','dashboard_basic','dashboard_advanced','clients','quotes','quote_pdf','follow_up','catalog','invoices','partial_payments','accounts_receivable','roles_basic','roles_advanced','whatsapp_templates','exports_csv','exports_pdf','company_branding','multi_company','referrals','ganadero_module','ganadero_daily_control','ganadero_monthly_summary','ganadero_pdf','ganadero_csv','custom_reports','integrations','billing_settings']
+  }
 };
 
-const ACTIVE_BILLING_STATUSES = new Set(['active', 'trialing', 'on_trial', 'paid']);
+const LEGACY_PLAN_ALIASES = {
+  free: 'demo', trial: 'demo', demo: 'demo', starter: 'crm_basico', basic: 'crm_basico', basico: 'crm_basico', crm_basic: 'crm_basico', crm_basico: 'crm_basico', pro: 'crm_pro', enterprise: 'crm_pro', business: 'crm_pro', crm_pro: 'crm_pro', ganadero: 'ganadero_pro', ganadero_pro: 'ganadero_pro', dairy: 'ganadero_pro', custom: 'crm_empresa', empresa: 'crm_empresa', crm_empresa: 'crm_empresa'
+};
+
+const FEATURE_DEFINITIONS = {
+  crm_core: { label: 'CRM base' }, dashboard_basic: { label: 'Dashboard básico' }, dashboard_advanced: { label: 'Dashboard avanzado' }, clients: { label: 'Clientes' }, quotes: { label: 'Cotizaciones' }, quote_pdf: { label: 'PDF de cotización' }, follow_up: { label: 'Seguimiento' }, catalog: { label: 'Catálogo' }, invoices: { label: 'Facturas comerciales' }, partial_payments: { label: 'Pagos parciales', plan: 'CRM Pro' }, accounts_receivable: { label: 'Cuentas por cobrar', plan: 'CRM Pro' }, roles_basic: { label: 'Roles básicos' }, roles_advanced: { label: 'Roles avanzados', plan: 'CRM Pro' }, whatsapp_templates: { label: 'WhatsApp' }, exports_csv: { label: 'Exportación CSV', plan: 'CRM Pro' }, exports_pdf: { label: 'Exportación PDF' }, company_branding: { label: 'Logo y marca' }, multi_company: { label: 'Multiempresa', plan: 'CRM Empresa' }, referrals: { label: 'Referidos' }, ganadero_module: { label: 'Módulo ganadero', plan: 'Ganadero Pro' }, ganadero_daily_control: { label: 'Control diario ganadero', plan: 'Ganadero Pro' }, ganadero_monthly_summary: { label: 'Resumen mensual ganadero', plan: 'Ganadero Pro' }, ganadero_pdf: { label: 'PDF ganadero', plan: 'Ganadero Pro' }, ganadero_csv: { label: 'CSV ganadero', plan: 'Ganadero Pro' }, custom_reports: { label: 'Reportes personalizados', plan: 'CRM Empresa' }, integrations: { label: 'Integraciones', plan: 'CRM Empresa' }, billing_settings: { label: 'Planes y pagos' }
+};
+
+
+const ACTION_GATES = {
+  client_create: { permission: 'clients_write', feature: 'clients', limitResource: 'clients', write: true, route: 'billing' },
+  client_delete: { permission: 'clients_delete', feature: 'clients', write: true, route: 'billing' },
+  quote_create: { permission: 'quotes_write', feature: 'quotes', limitResource: 'quotes', write: true, route: 'billing' },
+  quote_update: { permission: 'quotes_write', feature: 'quotes', write: true, route: 'billing' },
+  quote_delete: { permission: 'quotes_delete', feature: 'quotes', write: true, route: 'billing' },
+  quote_pdf: { permission: 'quotes_read', feature: 'quote_pdf', write: false, route: 'billing' },
+  invoice_create: { permission: 'invoices_write', feature: 'invoices', limitResource: 'invoices', write: true, route: 'billing' },
+  invoice_issue: { permission: 'invoices_write', feature: 'invoices', write: true, route: 'billing' },
+  invoice_void: { permission: 'invoices_void', feature: 'invoices', write: true, route: 'billing' },
+  invoice_payment: { permission: 'invoices_payments', feature: 'partial_payments', write: true, route: 'billing' },
+  catalog_create: { permission: 'catalog_write', feature: 'catalog', limitResource: 'catalog', write: true, route: 'billing' },
+  catalog_delete: { permission: 'catalog_delete', feature: 'catalog', write: true, route: 'billing' },
+  templates_create: { permission: 'templates_write', feature: 'whatsapp_templates', write: true, route: 'billing' },
+  templates_delete: { permission: 'templates_delete', feature: 'whatsapp_templates', write: true, route: 'billing' },
+  milk_create: { permission: 'milk_write', feature: 'ganadero_daily_control', write: true, route: 'ganadero-upgrade' },
+  milk_delete: { permission: 'milk_delete', feature: 'ganadero_daily_control', write: true, route: 'ganadero-upgrade' },
+  milk_pdf: { permission: 'milk_export', feature: 'ganadero_pdf', limitResource: 'exports', write: false, route: 'ganadero-upgrade' },
+  milk_csv: { permission: 'milk_export', feature: 'ganadero_csv', limitResource: 'exports', write: false, route: 'ganadero-upgrade' },
+  team_manage: { permission: 'users_manage', feature: 'roles_advanced', write: true, route: 'billing' },
+  billing_manage: { permission: 'billing_manage', feature: 'billing_settings', write: false, route: 'billing' }
+};
+
+const ACTIVE_BILLING_STATUSES = new Set(['active', 'trial', 'trialing', 'on_trial', 'paid']);
+const LIMITED_BILLING_STATUSES = new Set(['past_due']);
+const BLOCKED_BILLING_STATUSES = new Set(['suspended', 'cancelled']);
+
 
 
 const ROLE_DEFINITIONS = {
@@ -26,8 +88,8 @@ const ROLE_DEFINITIONS = {
   },
   admin: {
     label: 'Administrador',
-    description: 'Administra operación diaria, configuración funcional, ventas, facturas, clientes, catálogo y reportes.',
-    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','quotes_delete','clients_read','clients_write','clients_delete','catalog_read','catalog_write','catalog_delete','templates_read','templates_write','templates_delete','invoices_read','invoices_write','invoices_payments','invoices_void','milk_read','milk_write','milk_delete','milk_export','settings_company','billing_manage','affiliates_manage','integrations_manage','users_manage']
+    description: 'Administra operación diaria, configuración funcional, ventas, facturas, clientes, catálogo y reportes. No administra usuarios ni roles.',
+    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','quotes_delete','clients_read','clients_write','clients_delete','catalog_read','catalog_write','catalog_delete','templates_read','templates_write','templates_delete','invoices_read','invoices_write','invoices_payments','invoices_void','milk_read','milk_write','milk_delete','milk_export','settings_company','billing_manage','affiliates_manage','integrations_manage']
   },
   ventas: {
     label: 'Ventas',
@@ -62,6 +124,7 @@ let state = {
   invoices: [],
   invoiceStorageMode: 'local',
   billing: null,
+  saasEntitlement: null,
   affiliate: null,
   referrals: [],
   commissions: [],
@@ -96,7 +159,8 @@ const defaultCompany = {
   currency: 'USD',
   tax_rate: 0,
   logo_data_url: '',
-  plan: 'free',
+  plan: 'demo',
+  active_plan_id: 'demo',
   subscription_status: 'trialing',
   business_type: 'general',
   default_quote_notes: 'Gracias por considerar nuestra propuesta. Esta cotización está sujeta a disponibilidad y vigencia indicada.',
@@ -122,6 +186,7 @@ const localDefaultState = {
   invoices: [],
   invoiceStorageMode: 'local',
   billing: null,
+  saasEntitlement: null,
   affiliate: null,
   referrals: [],
   commissions: [],
@@ -228,9 +293,13 @@ function renderLanguageSelector(extraClass = '') {
 }
 
 function renderUtilityBar() {
+  const notice = subscriptionStatusNotice();
   return `
     <div class="utility-bar">
-      <div class="utility-title">${escapeHtml(state.company?.name || 'CotizaFlow')}</div>
+      <div>
+        <div class="utility-title">${escapeHtml(state.company?.name || 'CotizaFlow')}</div>
+        ${notice ? `<div class="subscription-notice">${escapeHtml(notice)}</div>` : ''}
+      </div>
       <div class="utility-actions">${currentRoleBadge()}${renderLanguageSelector()}</div>
     </div>
   `;
@@ -749,6 +818,7 @@ async function loadRemoteData() {
     if (businessTemplatesError) throw businessTemplatesError;
 
     state.billing = billingRows?.[0] || null;
+    await loadSaasEntitlement();
     state.affiliate = affiliate || null;
     state.publicLinks = publicLinks || [];
     state.quoteEvents = quoteEvents || [];
@@ -818,7 +888,8 @@ async function getOrCreateRemoteCompany() {
       email: state.session.email,
       currency: 'USD',
       tax_rate: 0,
-      plan: 'free',
+      plan: 'demo',
+      active_plan_id: 'demo',
       subscription_status: 'trialing',
       business_type: 'general',
       default_quote_notes: defaultCompany.default_quote_notes
@@ -932,6 +1003,42 @@ async function loadTeamMembers() {
   }
 }
 
+
+async function loadSaasEntitlement() {
+  state.saasEntitlement = null;
+  if (mode !== 'supabase' || !supabaseClient || !state.company?.id) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('company_saas_entitlements')
+      .select('*')
+      .eq('company_id', state.company.id)
+      .maybeSingle();
+    if (error) throw error;
+    state.saasEntitlement = data || null;
+  } catch (error) {
+    console.warn('Entitlements SaaS pendientes. Ejecuta schema_phase10a_saas_plans.sql:', error.message || error);
+    state.saasEntitlement = null;
+  }
+}
+
+function applySaasEntitlementToPlan(planKey, plan) {
+  const entitlement = state.saasEntitlement;
+  if (!entitlement || normalizePlanKey(entitlement.plan_id) !== planKey) return plan;
+  return {
+    ...plan,
+    name: entitlement.plan_name || plan.name,
+    price: entitlement.monthly_price ?? plan.price,
+    currency: entitlement.currency || plan.currency,
+    maxClients: Number(entitlement.max_clients ?? plan.maxClients),
+    maxQuotesPerMonth: Number(entitlement.max_quotes_per_month ?? plan.maxQuotesPerMonth),
+    quoteLimit: Number(entitlement.max_quotes_per_month ?? plan.quoteLimit),
+    maxInvoicesPerMonth: Number(entitlement.max_invoices_per_month ?? plan.maxInvoicesPerMonth),
+    maxExportsPerMonth: Number(entitlement.max_exports_per_month ?? plan.maxExportsPerMonth),
+    users: Number(entitlement.max_users ?? plan.users),
+    catalogLimit: Number(entitlement.catalog_limit ?? plan.catalogLimit)
+  };
+}
+
 function normalizeCompany(company) {
   return { ...defaultCompany, ...(company || {}) };
 }
@@ -961,31 +1068,186 @@ async function seedDefaultTemplates(companyId) {
   sessionStorage.setItem(seededKey, '1');
 }
 
+function getRawBillingStatus() {
+  return String(state.saasEntitlement?.subscription_status || state.billing?.status || state.billing?.subscription_status || state.company?.subscription_status || 'trialing').toLowerCase();
+}
+
+function normalizeSubscriptionStatus(statusValue) {
+  const status = String(statusValue || 'trialing').toLowerCase();
+  if (['trialing', 'on_trial', 'trial'].includes(status)) return 'trial';
+  if (['active', 'paid'].includes(status)) return 'active';
+  if (['past_due', 'payment_failed', 'unpaid'].includes(status)) return 'past_due';
+  if (['suspended', 'paused', 'blocked'].includes(status)) return 'suspended';
+  if (['cancelled', 'canceled', 'inactive'].includes(status)) return 'cancelled';
+  return status;
+}
+
 function hasUsableSubscription() {
-  const status = state.billing?.status || state.company?.subscription_status || 'inactive';
+  const rawStatus = getRawBillingStatus();
+  const status = normalizeSubscriptionStatus(rawStatus);
   const periodEnd = state.billing?.current_period_end || state.company?.plan_current_period_end;
-  if (ACTIVE_BILLING_STATUSES.has(status)) return true;
-  if (periodEnd && new Date(periodEnd).getTime() > Date.now()) return true;
+  if (ACTIVE_BILLING_STATUSES.has(rawStatus) || ['trial','active'].includes(status)) return true;
+  if (status === 'past_due') return true;
+  if (periodEnd && new Date(periodEnd).getTime() > Date.now() && !BLOCKED_BILLING_STATUSES.has(status)) return true;
   return false;
 }
 
+function isSubscriptionBlocked() {
+  return BLOCKED_BILLING_STATUSES.has(normalizeSubscriptionStatus(getRawBillingStatus()));
+}
+
+function isSubscriptionPastDue() {
+  return normalizeSubscriptionStatus(getRawBillingStatus()) === 'past_due';
+}
+
+function subscriptionBlockMessage() {
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  if (status === 'suspended') return 'La suscripción está suspendida. Puedes consultar información existente, configuración y planes, pero no crear ni modificar registros.';
+  if (status === 'cancelled') return 'La suscripción está cancelada. Puedes consultar información existente, configuración y planes, pero no crear ni modificar registros.';
+  return 'La suscripción está bloqueada. Solo puedes consultar información existente.';
+}
+
+function subscriptionStatusNotice() {
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  if (status === 'past_due') return 'Pago pendiente: el sistema sigue activo, pero debes regularizar el plan para evitar suspensión.';
+  if (status === 'suspended') return 'Suscripción suspendida: operación en modo solo lectura. Actualiza el plan o registra el pago para reactivar.';
+  if (status === 'cancelled') return 'Suscripción cancelada: operación en modo solo lectura. Actualiza el plan para reactivar.';
+  return '';
+}
+
+
 function normalizePlanKey(planValue) {
-  const plan = String(planValue || 'free').toLowerCase();
-  if (plan === 'business') return 'enterprise';
-  if (plan === 'pro') return 'starter';
-  if (PLAN_CATALOG[plan]) return plan;
-  return 'free';
+  const plan = String(planValue || 'demo').toLowerCase().trim();
+  return LEGACY_PLAN_ALIASES[plan] || (PLAN_CATALOG[plan] ? plan : 'demo');
 }
 
 function getEffectivePlanKey() {
-  const plan = normalizePlanKey(state.billing?.plan || state.company?.plan || 'free');
-  if (plan === 'free') return 'free';
-  if (plan === 'custom') return hasUsableSubscription() ? 'custom' : 'free';
-  return hasUsableSubscription() ? (PLAN_CATALOG[plan] ? plan : 'free') : 'free';
+  const plan = normalizePlanKey(state.saasEntitlement?.plan_id || state.billing?.plan_id || state.billing?.plan || state.company?.active_plan_id || state.company?.plan || 'demo');
+  if (isSubscriptionBlocked()) return 'demo';
+  if (plan === 'crm_empresa') return hasUsableSubscription() ? 'crm_empresa' : 'demo';
+  return hasUsableSubscription() ? (PLAN_CATALOG[plan] ? plan : 'demo') : 'demo';
 }
 
 function getEffectivePlan() {
-  return PLAN_CATALOG[getEffectivePlanKey()] || PLAN_CATALOG.free;
+  const planKey = getEffectivePlanKey();
+  return applySaasEntitlementToPlan(planKey, PLAN_CATALOG[planKey] || PLAN_CATALOG.demo);
+}
+
+function planFeatureSet(planKey = getEffectivePlanKey()) {
+  return new Set((PLAN_CATALOG[planKey]?.features || []).map(String));
+}
+
+function canUseFeature(featureKey) {
+  if (!featureKey) return true;
+  if (getEffectivePlanKey() === 'crm_empresa') return true;
+  return planFeatureSet().has(String(featureKey));
+}
+
+function featureUpgradePlan(featureKey) {
+  return FEATURE_DEFINITIONS[featureKey]?.plan || getEffectivePlan().upgradeLabel || 'un plan superior';
+}
+
+function renderFeatureLocked(featureKey, title = 'Función no incluida en tu plan', description = '') {
+  const feature = FEATURE_DEFINITIONS[featureKey]?.label || 'esta función';
+  const planName = featureUpgradePlan(featureKey);
+  const text = description || `${feature} está disponible en ${planName}. Actualiza tu plan para activar esta función.`;
+  return `
+    <section class="card access-denied upgrade-card">
+      <span class="badge locked">Premium</span>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(text)}</p>
+      <div class="actions">
+        <button class="btn primary" data-route="billing">Actualizar plan</button>
+        <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
+      </div>
+    </section>
+  `;
+}
+
+
+function evaluateActionGate(actionKey, overrides = {}) {
+  const gate = { ...(ACTION_GATES[actionKey] || {}), ...overrides };
+  if (gate.permission && !can(gate.permission)) {
+    return { ok: false, code: 'role', route: 'dashboard', message: gate.permissionMessage || 'Tu rol no tiene permiso para realizar esta acción.' };
+  }
+  if (gate.feature && !canUseFeature(gate.feature)) {
+    const feature = FEATURE_DEFINITIONS[gate.feature]?.label || 'esta función';
+    return { ok: false, code: 'feature', feature: gate.feature, route: gate.route || 'billing', message: gate.featureMessage || `${feature} está disponible en ${featureUpgradePlan(gate.feature)}.` };
+  }
+  if (gate.write && isSubscriptionBlocked() && !gate.allowWhenBlocked) {
+    return { ok: false, code: 'subscription', route: 'billing', message: subscriptionBlockMessage() };
+  }
+  if (gate.limitResource && !gate.skipLimit && resourceLimitReached(gate.limitResource)) {
+    return { ok: false, code: 'limit', resource: gate.limitResource, route: 'billing', message: resourceLimitMessage(gate.limitResource) };
+  }
+  return { ok: true };
+}
+
+function guardAction(actionKey, overrides = {}) {
+  const result = evaluateActionGate(actionKey, overrides);
+  if (result.ok) return true;
+  toast(result.message);
+  if (result.route && result.route !== getRoute()) {
+    setRoute(result.route);
+    render();
+  }
+  return false;
+}
+
+function renderActionLocked(actionKey, overrides = {}, title = 'Acción no disponible') {
+  const result = evaluateActionGate(actionKey, overrides);
+  if (result.ok) return '';
+  if (result.code === 'feature' && result.feature) return renderFeatureLocked(result.feature, title, result.message);
+  if (result.code === 'limit') return renderResourceLimitLocked(result.resource, title);
+  if (result.code === 'subscription') return renderSubscriptionLocked();
+  return renderAccessDenied();
+}
+
+function renderResourceLimitLocked(resourceKey, title = 'Límite alcanzado') {
+  const usage = getPlanUsage();
+  const resource = usage.resources[resourceKey];
+  const label = resource?.label || 'este recurso';
+  const limitText = resource && Number.isFinite(resource.limit) ? `${resource.used}/${resource.limit}` : `${resource?.used || 0}`;
+  return `
+    <section class="card access-denied upgrade-card">
+      <span class="badge locked">Límite del plan</span>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(label)} llegó al límite del plan ${escapeHtml(usage.plan.name)} (${escapeHtml(limitText)}). Actualiza tu plan para continuar operando.</p>
+      <div class="actions">
+        <button class="btn primary" data-route="billing">Actualizar plan</button>
+        <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderSubscriptionLocked() {
+  return `
+    <section class="card access-denied upgrade-card">
+      <span class="badge danger">Cuenta bloqueada</span>
+      <h1>Operación en modo solo lectura</h1>
+      <p>${escapeHtml(subscriptionBlockMessage())}</p>
+      <div class="actions">
+        <button class="btn primary" data-route="billing">Ver planes y pagos</button>
+        <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
+      </div>
+    </section>
+  `;
+}
+
+function resourceLimitReached(resourceKey) {
+  const usage = getPlanUsage();
+  const resource = usage.resources[resourceKey];
+  if (!resource) return false;
+  if (!Number.isFinite(resource.limit)) return false;
+  return resource.used >= resource.limit;
+}
+
+function resourceLimitMessage(resourceKey) {
+  const usage = getPlanUsage();
+  const resource = usage.resources[resourceKey];
+  if (!resource) return 'Llegaste al límite de tu plan.';
+  return `Llegaste al límite de ${resource.label.toLowerCase()} del plan ${usage.plan.name}.`;
 }
 
 function getMonthStartISO() {
@@ -995,28 +1257,57 @@ function getMonthStartISO() {
 
 function getMonthlyQuoteCount() {
   const start = getMonthStartISO();
-  return state.quotes.filter(q => !q.created_at || String(q.created_at) >= start).length;
+  return (state.quotes || []).filter(q => !q.created_at || String(q.created_at) >= start).length;
+}
+
+function getMonthlyInvoiceCount() {
+  const start = getMonthStartISO();
+  return (state.invoices || []).filter(inv => !inv.created_at || String(inv.created_at) >= start).length;
+}
+
+function normalizeFiniteLimit(value) {
+  const limit = Number(value ?? 0);
+  return limit >= 999999 ? Infinity : Math.max(0, limit);
+}
+
+function usageResource(label, used, limitValue) {
+  const limit = normalizeFiniteLimit(limitValue);
+  const remaining = Number.isFinite(limit) ? Math.max(0, limit - used) : Infinity;
+  const percent = Number.isFinite(limit) && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return { label, used, limit, remaining, percent };
 }
 
 function getPlanUsage() {
   const planKey = getEffectivePlanKey();
   const plan = getEffectivePlan();
-  const used = getMonthlyQuoteCount();
-  const limit = Number(plan.quoteLimit || 0);
-  const remaining = Math.max(0, limit - used);
-  const percent = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-  return { planKey, plan, used, limit, remaining, percent };
+  const resources = {
+    clients: usageResource('Clientes', (state.clients || []).length, plan.maxClients),
+    quotes: usageResource('Cotizaciones mensuales', getMonthlyQuoteCount(), plan.maxQuotesPerMonth ?? plan.quoteLimit),
+    invoices: usageResource('Facturas comerciales mensuales', getMonthlyInvoiceCount(), plan.maxInvoicesPerMonth),
+    catalog: usageResource('Items de catálogo', activeProductsServices().length, plan.catalogLimit),
+    users: usageResource('Usuarios', Math.max(1, (state.teamMembers || []).filter(m => String(m.status || 'active') === 'active').length || 1), plan.users),
+    exports: usageResource('Exportaciones mensuales', 0, plan.maxExportsPerMonth)
+  };
+  const quoteUsage = resources.quotes;
+  return { planKey, plan, resources, used: quoteUsage.used, limit: quoteUsage.limit, remaining: quoteUsage.remaining, percent: quoteUsage.percent };
 }
 
 function canCreateQuote() {
-  const usage = getPlanUsage();
-  return usage.used < usage.limit;
+  return evaluateActionGate('quote_create').ok;
+}
+
+function canCreateClient() {
+  return evaluateActionGate('client_create').ok;
+}
+
+function canCreateInvoice() {
+  return evaluateActionGate('invoice_create').ok;
 }
 
 function planStatusText() {
   const plan = getEffectivePlan();
-  const rawStatus = state.billing?.status || state.company?.subscription_status || 'inactive';
-  return `${plan.name} · ${rawStatus}`;
+  const rawStatus = getRawBillingStatus();
+  return `${plan.name} · ${normalizeSubscriptionStatus(rawStatus)}`;
 }
 
 function getRoute() {
@@ -1310,10 +1601,11 @@ function renderPublic(route) {
             <span class="eyebrow">Planes</span>
             <h2>Empieza simple y escala cuando tengas más volumen.</h2>
           </div>
-          <div class="grid cols-3">
-            <div class="plan-card card"><div class="plan-topline">Starter</div><div class="plan-price">US$9<span>/mes</span></div><p>Hasta 50 cotizaciones mensuales. Ideal para negocios pequeños.</p><button class="btn primary" data-route="auth">Comenzar</button></div>
-            <div class="plan-card card"><div class="plan-topline">Enterprise</div><div class="plan-price">US$39<span>/mes</span></div><p>Hasta 500 cotizaciones mensuales, catálogo amplio y seguimiento comercial.</p><button class="btn primary" data-route="auth">Comenzar</button></div>
-            <div class="plan-card card"><div class="plan-topline">A cotizar</div><div class="plan-price">Personalizado</div><p>Para empresas con alto volumen, múltiples usuarios o integraciones específicas.</p><a class="btn secondary" href="mailto:${escapeHtml(config.salesEmail || 'ventas@cotizaflow.app')}">Contactar</a></div>
+          <div class="grid cols-4">
+            <div class="plan-card card"><div class="plan-topline">CRM Básico</div><div class="plan-price">RD$2,900<span>/mes</span></div><p>Clientes, cotizaciones, seguimiento, catálogo y facturas comerciales simples.</p><button class="btn primary" data-route="auth">Comenzar</button></div>
+            <div class="plan-card card"><div class="plan-topline">CRM Pro</div><div class="plan-price">RD$6,900<span>/mes</span></div><p>Facturas comerciales, pagos parciales, cuentas por cobrar, roles y reportes.</p><button class="btn primary" data-route="auth">Comenzar</button></div>
+            <div class="plan-card card"><div class="plan-topline">Ganadero Pro</div><div class="plan-price">RD$12,900<span>/mes</span></div><p>CRM Pro más control diario de leche, productores, comisión, PDF y CSV mensual.</p><button class="btn primary" data-route="auth">Comenzar</button></div>
+            <div class="plan-card card"><div class="plan-topline">CRM Empresa</div><div class="plan-price">Personalizado</div><p>Para varias sucursales, reportes personalizados o integraciones específicas.</p><a class="btn secondary" href="mailto:${escapeHtml(config.salesEmail || 'ventas@cotizaflow.app')}">Contactar</a></div>
           </div>
         </section>
 
@@ -1399,7 +1691,7 @@ function renderAuthBox() {
         <button class="btn primary full" type="submit" ${disabled ? 'disabled' : ''}>
           ${tab === 'register' ? 'Crear cuenta' : 'Entrar'}
         </button>
-        ${tab === 'register' ? '<p class="help full-span">Si un administrador ya te agregó en Usuarios y roles, crea tu cuenta con ese mismo correo. Al entrar, la app te vinculará automáticamente a la empresa y aplicará tu rol.</p>' : ''}
+        ${tab === 'register' ? '<p class="help full-span">Si el Superusuario ya te agregó en Usuarios y roles, crea tu cuenta con ese mismo correo. Al entrar, la app te vinculará automáticamente a la empresa y aplicará tu rol.</p>' : ''}
         <button class="btn secondary full" type="button" data-action="start-demo">Usar demo local</button>
       </form>
     `}
@@ -1471,9 +1763,9 @@ function renderApp(route) {
         <nav>
           ${navLink('dashboard', t('dashboard'))}
           ${can('reports_read') ? navLink('reports', t('followup')) : ''}
-          ${state.company?.business_type === 'asociacion_ganaderos' && can('milk_read') ? navLink('milk', t('milkControl')) : ''}
+          ${renderMilkNavLink()}
           ${can('quotes_read') ? navLink('quotes', t('quotes')) : ''}
-          ${can('invoices_read') ? navLink('invoices', t('invoices')) : ''}
+          ${can('invoices_read') ? navLink(canUseFeature('invoices') ? 'invoices' : 'invoices-upgrade', t('invoices') + (canUseFeature('invoices') ? '' : ' 🔒')) : ''}
           ${can('clients_read') ? navLink('clients', t('clients')) : ''}
           ${can('catalog_read') ? navLink('catalog', t('catalog')) : ''}
           ${can('templates_read') ? navLink('templates', t('templates')) : ''}
@@ -1495,10 +1787,22 @@ function navLink(route, label) {
   return `<button class="nav-link ${getRoute() === route ? 'active' : ''}" data-route="${route}">${label}</button>`;
 }
 
+function renderMilkNavLink() {
+  if (state.company?.business_type !== 'asociacion_ganaderos') return '';
+  if (!can('milk_read')) return '';
+  if (canUseFeature('ganadero_module')) return navLink('milk', t('milkControl'));
+  return navLink('ganadero-upgrade', `${t('milkControl')} 🔒`);
+}
+
 function renderRoute(route) {
+  if (route === 'ganadero-upgrade') return renderFeatureLocked('ganadero_module', 'Ganadero Pro requerido', 'Activa Ganadero Pro para registrar entregas diarias de leche, calcular comisiones y generar resúmenes mensuales por productor.');
+  if (route === 'invoices-upgrade') return renderFeatureLocked('invoices', 'Facturas comerciales no incluidas', 'Actualiza tu plan para crear facturas comerciales, controlar pagos y consultar cuentas por cobrar.');
   if (route.startsWith('quote-edit/')) return can('quotes_write') ? renderQuoteForm(route.split('/')[1]) : renderAccessDenied();
   if (route.startsWith('quote-view/')) return can('quotes_read') ? renderQuoteView(route.split('/')[1]) : renderAccessDenied();
-  if (route.startsWith('invoice-view/')) return can('invoices_read') ? renderInvoiceView(route.split('/')[1]) : renderAccessDenied();
+  if (route.startsWith('invoice-view/')) {
+    if (!canUseFeature('invoices')) return renderFeatureLocked('invoices', 'Facturas comerciales no incluidas');
+    return can('invoices_read') ? renderInvoiceView(route.split('/')[1]) : renderAccessDenied();
+  }
 
   const routePermissions = {
     quotes: 'quotes_read',
@@ -1517,6 +1821,15 @@ function renderRoute(route) {
   };
   const permission = routePermissions[route];
   if (permission && !can(permission)) return renderAccessDenied();
+  if (route === 'milk' && !canUseFeature('ganadero_module')) return renderFeatureLocked('ganadero_module', 'Ganadero Pro requerido', 'El tipo de negocio es Asociación Ganaderos, pero el plan actual no incluye Control Diario.');
+  if (route === 'invoices' && !canUseFeature('invoices')) return renderFeatureLocked('invoices', 'Facturas comerciales no incluidas');
+  if (route === 'quote-new' && !evaluateActionGate('quote_create').ok) return renderActionLocked('quote_create', {}, 'No puedes crear otra cotización');
+  if (route === 'catalog' && !canUseFeature('catalog')) return renderFeatureLocked('catalog', 'Catálogo no incluido');
+  if (route === 'clients' && !canUseFeature('clients')) return renderFeatureLocked('clients', 'Clientes no incluido');
+  if (route === 'reports' && !canUseFeature('follow_up')) return renderFeatureLocked('follow_up', 'Seguimiento no incluido');
+  if (route === 'templates' && !canUseFeature('whatsapp_templates')) return renderFeatureLocked('whatsapp_templates', 'Plantillas de WhatsApp no incluidas');
+  if (route === 'affiliates' && !canUseFeature('referrals')) return renderFeatureLocked('referrals', 'Referidos no incluidos');
+  if (route === 'integrations' && !canUseFeature('integrations')) return renderFeatureLocked('integrations', 'Integraciones no incluidas');
 
   switch (route) {
     case 'quotes': return renderQuotes();
@@ -2112,19 +2425,34 @@ function renderAnalyticsQuoteTable(quotes, compact = false) {
 }
 
 
+function formatLimit(value) {
+  return Number.isFinite(value) ? numberFmt(value, 0) : 'Ilimitado';
+}
+
 function renderUsageCard() {
   const usage = getPlanUsage();
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  const resources = ['clients','quotes','invoices','catalog','users','exports'].map(key => ({ key, ...usage.resources[key] }));
   return `
-    <section class="card" style="margin-top:18px;">
+    <section class="card usage-card" style="margin-top:18px;">
       <div class="page-header" style="margin-bottom:12px;">
         <div>
-          <h2>Uso mensual del plan</h2>
-          <p>${escapeHtml(usage.plan.name)} permite ${usage.limit} cotizaciones al mes.</p>
+          <h2>Uso y límites del plan</h2>
+          <p>${escapeHtml(usage.plan.name)} · Estado: ${escapeHtml(status)} · ${escapeHtml(usage.plan.setupLabel || '')}</p>
         </div>
         <button class="btn secondary" data-route="billing">Ver planes</button>
       </div>
-      <div class="usage-bar"><span style="width:${usage.percent}%"></span></div>
-      <p class="help">Usadas este mes: <strong>${usage.used}</strong> / ${usage.limit}. Disponibles: ${usage.remaining}.</p>
+      <div class="usage-grid">
+        ${resources.map(resource => `
+          <div class="mini-usage">
+            <strong>${escapeHtml(resource.label)}</strong>
+            <span>${formatLimit(resource.used)} / ${formatLimit(resource.limit)}</span>
+            ${Number.isFinite(resource.limit) && resource.limit > 0 ? `<div class="usage-bar small"><span style="width:${resource.percent}%"></span></div>` : '<p class="help">Sin límite práctico en este plan.</p>'}
+          </div>
+        `).join('')}
+      </div>
+      ${status === 'past_due' ? `<div class="notice warning" style="margin-top:14px;">Tu suscripción tiene pago pendiente. Puedes consultar datos, pero algunas funciones podrán bloquearse si pasa a suspendida.</div>` : ''}
+      ${isSubscriptionBlocked() ? `<div class="notice danger" style="margin-top:14px;">La suscripción está ${escapeHtml(status)}. El sistema queda en modo consulta; actualiza el plan para crear nuevos registros.</div>` : ''}
     </section>
   `;
 }
@@ -2428,7 +2756,7 @@ async function updateInvoiceInStorage(invoice) {
 }
 
 async function convertQuoteToInvoice(quoteId) {
-  if (!requirePermission('invoices_write')) return;
+  if (!guardAction('invoice_create')) return;
   const quote = state.quotes.find(q => q.id === quoteId);
   if (!quote) return;
   const existing = quoteInvoice(quoteId);
@@ -2481,7 +2809,7 @@ async function convertQuoteToInvoice(quoteId) {
 }
 
 async function issueInvoice(id) {
-  if (!requirePermission('invoices_write')) return;
+  if (!guardAction('invoice_issue')) return;
   const invoice = state.invoices.find(inv => inv.id === id);
   if (!invoice) return;
   if (invoice.status === 'void') return toast('No puedes emitir una factura anulada.');
@@ -2493,7 +2821,7 @@ async function issueInvoice(id) {
 }
 
 async function voidInvoice(id) {
-  if (!requirePermission('invoices_void')) return;
+  if (!guardAction('invoice_void')) return;
   const invoice = state.invoices.find(inv => inv.id === id);
   if (!invoice) return;
   const reason = prompt('Motivo de anulación:', 'Error en factura / cliente canceló');
@@ -2507,7 +2835,7 @@ async function voidInvoice(id) {
 }
 
 async function saveInvoicePayment(form) {
-  if (!requirePermission('invoices_payments')) return;
+  if (!guardAction('invoice_payment')) return;
   const fd = new FormData(form);
   const invoiceId = String(fd.get('invoice_id') || '');
   const invoice = state.invoices.find(inv => inv.id === invoiceId);
@@ -2638,7 +2966,7 @@ function renderInvoiceView(id) {
   const paid = invoicePaidAmount(invoice);
   const balance = invoiceBalance(invoice);
   const effectiveStatus = effectiveInvoiceStatus(invoice);
-  const canPay = can('invoices_payments') && invoice.status !== 'void' && balance > 0 && invoice.status !== 'draft';
+  const canPay = can('invoices_payments') && canUseFeature('partial_payments') && !isSubscriptionBlocked() && invoice.status !== 'void' && balance > 0 && invoice.status !== 'draft';
   return `
     <div class="page-header">
       <div>
@@ -2729,6 +3057,13 @@ function generateInvoicePdf(id) {
   const client = getClient(invoice.client_id);
   const totals = invoiceTotals(invoice);
   const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+  if (getEffectivePlan().lockedPdfWatermark) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(46);
+    doc.setTextColor(220, 220, 220);
+    doc.text('DEMO', 245, 390, { angle: 35 });
+    doc.setTextColor(0, 0, 0);
+  }
   const left = 44;
   const right = 568;
   const company = state.company || defaultCompany;
@@ -2817,7 +3152,7 @@ function renderQuotes() {
         <h1>Cotizaciones</h1>
         <p>Crea, edita, marca estado y genera PDF.</p>
       </div>
-      ${can('quotes_write') ? '<button class="btn primary" data-route="quote-new">Nueva cotización</button>' : ''}
+      ${can('quotes_write') ? `<button class="btn primary" data-route="quote-new" ${canCreateQuote() ? '' : 'disabled'}>Nueva cotización</button>` : ''}
     </div>
     <section class="card">
       ${state.quotes.length ? renderQuotesTable(state.quotes) : `<div class="empty">No hay cotizaciones. Crea la primera.</div>`}
@@ -2953,6 +3288,7 @@ function renderClientFilters() {
 
 function renderClients() {
   const clients = getFilteredClients();
+  const clientLimitReached = resourceLimitReached('clients') || isSubscriptionBlocked() || !canUseFeature('clients');
   const all = state.clients || [];
   const totals = all.reduce((acc, client) => {
     const stats = getClientStats(client);
@@ -2982,15 +3318,16 @@ function renderClients() {
     <section class="grid cols-2" style="margin-top:18px;">
       <div class="card">
         <h2>Nuevo cliente</h2>
+        ${clientLimitReached ? `<div class="notice warning">${escapeHtml(resourceLimitMessage('clients'))} Actualiza tu plan para registrar más clientes.</div>` : ''}
         <form data-form="client" class="form-grid two">
-          <div class="field"><label>Nombre</label><input name="name" required placeholder="Cliente o empresa" /></div>
-          <div class="field"><label>Estado comercial</label><select name="commercial_status">${clientStatusOptions('lead')}</select></div>
-          <div class="field"><label>Correo</label><input name="email" type="email" placeholder="cliente@email.com" /></div>
-          <div class="field"><label>Teléfono</label><input name="phone" placeholder="809-000-0000" /></div>
-          <div class="field" style="grid-column:1/-1;"><label>Etiquetas</label><input name="tags" placeholder="prioridad, taller, recurrente" /></div>
-          <div class="field" style="grid-column:1/-1;"><label>Dirección</label><textarea name="address" placeholder="Dirección comercial"></textarea></div>
-          <div class="field" style="grid-column:1/-1;"><label>Notas internas</label><textarea name="notes" placeholder="Preferencias, acuerdos, observaciones"></textarea></div>
-          <button class="btn primary" type="submit">Guardar cliente</button>
+          <div class="field"><label>Nombre</label><input name="name" required placeholder="Cliente o empresa" ${clientLimitReached ? 'disabled' : ''} /></div>
+          <div class="field"><label>Estado comercial</label><select name="commercial_status" ${clientLimitReached ? 'disabled' : ''}>${clientStatusOptions('lead')}</select></div>
+          <div class="field"><label>Correo</label><input name="email" type="email" placeholder="cliente@email.com" ${clientLimitReached ? 'disabled' : ''} /></div>
+          <div class="field"><label>Teléfono</label><input name="phone" placeholder="809-000-0000" ${clientLimitReached ? 'disabled' : ''} /></div>
+          <div class="field" style="grid-column:1/-1;"><label>Etiquetas</label><input name="tags" placeholder="prioridad, taller, recurrente" ${clientLimitReached ? 'disabled' : ''} /></div>
+          <div class="field" style="grid-column:1/-1;"><label>Dirección</label><textarea name="address" placeholder="Dirección comercial" ${clientLimitReached ? 'disabled' : ''}></textarea></div>
+          <div class="field" style="grid-column:1/-1;"><label>Notas internas</label><textarea name="notes" placeholder="Preferencias, acuerdos, observaciones" ${clientLimitReached ? 'disabled' : ''}></textarea></div>
+          <button class="btn primary" type="submit" ${clientLimitReached ? 'disabled' : ''}>Guardar cliente</button>
         </form>
       </div>
 
@@ -3903,7 +4240,7 @@ async function insertMilkDeliverySupabase(payload, clientId) {
 }
 
 async function saveMilkDelivery(form) {
-  if (!requirePermission('milk_write')) return;
+  if (!guardAction('milk_create')) return;
   const fd = new FormData(form);
   const dairyDefaults = getDairyDefaults();
   const producerClient = await resolveMilkProducerClient(fd.get('producer_client_id'), fd.get('new_producer_name'));
@@ -3963,7 +4300,7 @@ async function saveMilkDelivery(form) {
 }
 
 async function deleteMilkRecord(id) {
-  if (!requirePermission('milk_delete')) return;
+  if (!guardAction('milk_delete')) return;
   if (!confirm('¿Borrar este registro de leche?')) return;
   if (mode === 'supabase' && supabaseClient && state.milkStorageMode === 'supabase') {
     const { error } = await supabaseClient.from('milk_deliveries').delete().eq('id', id);
@@ -3977,7 +4314,7 @@ async function deleteMilkRecord(id) {
 }
 
 function generateMilkPdf() {
-  if (!requirePermission('milk_export')) return;
+  if (!guardAction('milk_pdf')) return;
   if (!window.jspdf?.jsPDF) {
     toast('jsPDF no está disponible. Revisa tu conexión.');
     return;
@@ -4044,7 +4381,7 @@ function generateMilkPdf() {
 }
 
 function exportMilkCsv() {
-  if (!requirePermission('milk_export')) return;
+  if (!guardAction('milk_csv')) return;
   const month = state.milkFilters?.month || currentMonthValue();
   const records = getMilkRecordsForMonth(month);
   if (!records.length) {
@@ -4085,7 +4422,7 @@ function renderTeamMembers() {
     <div class="page-header">
       <div>
         <h1>Usuarios y roles</h1>
-        <p>Define quién puede cotizar, registrar Control Diario, ver reportes, administrar pagos o configurar la empresa.</p>
+        <p>Solo el Superusuario puede ver y administrar esta vista. Define quién puede cotizar, registrar Control Diario, ver reportes, administrar pagos o configurar la empresa.</p>
       </div>
       <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
     </div>
@@ -4118,7 +4455,7 @@ function renderTeamMembers() {
         </div>
         <div class="field" style="grid-column:1/-1;">
           <label class="checkbox-line"><input type="checkbox" name="send_setup" value="1" /> Enviar correo de recuperación/activación al guardar</label>
-          <p class="help">Este registro define el rol dentro de la empresa. Para poder entrar, el correo también debe existir en Supabase Auth: el usuario puede crear cuenta con ese mismo correo o usar “Olvidé contraseña” si ya existe. Crear el rol aquí no crea una contraseña directamente desde el frontend.</p>
+          <p class="help">Este registro define el rol dentro de la empresa. Solo el Superusuario puede ver esta vista. Para poder entrar, el correo también debe existir en Supabase Auth: el usuario puede crear cuenta con ese mismo correo o usar “Olvidé contraseña” si ya existe. Crear el rol aquí no crea una contraseña directamente desde el frontend.</p>
         </div>
         <button class="btn primary" type="submit">Guardar usuario</button>
       </form>
@@ -4134,7 +4471,7 @@ function renderTeamMembers() {
               ${members.map(member => {
                 const roleKey = normalizeRole(member.role);
                 const isSelf = normalizeEmail(member.email) === ownerEmail || (member.user_id && state.session?.id && String(member.user_id) === String(state.session.id));
-                const isOwnerSuper = isSelf && isCompanyOwner();
+                const isProtectedSuperuser = roleKey === 'superuser' || isSelf;
                 return `
                   <tr>
                     <td><strong>${escapeHtml(member.full_name || 'Sin nombre')}</strong>${isSelf ? '<br><span class="help">Tu usuario</span>' : ''}</td>
@@ -4145,7 +4482,7 @@ function renderTeamMembers() {
                     <td>
                       <div class="row-actions">
                         <button class="btn secondary small" data-action="send-setup-email" data-email="${escapeHtml(member.email || '')}">Enviar acceso</button>
-                        ${isOwnerSuper ? '<span class="help">Protegido</span>' : `<button class="btn danger small" data-action="deactivate-team-member" data-id="${escapeHtml(member.id)}">Desactivar</button>`}
+                        ${isProtectedSuperuser ? '<span class="help">Protegido</span>' : `<button class="btn danger small" data-action="deactivate-team-member" data-id="${escapeHtml(member.id)}">Desactivar</button>`}
                       </div>
                     </td>
                   </tr>
@@ -4241,8 +4578,8 @@ async function deactivateTeamMember(id) {
   if (!requirePermission('users_manage')) return;
   const member = (state.teamMembers || []).find(item => String(item.id) === String(id));
   if (!member) return;
-  if (normalizeEmail(member.email) === normalizeEmail(state.session?.email) && isCompanyOwner()) {
-    toast('No puedes desactivar el superusuario propietario.');
+  if (normalizeEmail(member.email) === normalizeEmail(state.session?.email) || normalizeRole(member.role) === 'superuser') {
+    toast('No puedes desactivar tu propio usuario ni un Superusuario desde esta pantalla.');
     return;
   }
   if (!confirm('¿Desactivar este usuario?')) return;
@@ -4295,12 +4632,13 @@ function renderIntegrations() {
 
 function renderBilling() {
   const usage = getPlanUsage();
-  const provider = config.billingProvider || 'lemon_squeezy';
+  const provider = config.billingProvider || 'manual / lemon_squeezy';
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
   return `
     <div class="page-header">
       <div>
         <h1>Planes y pagos</h1>
-        <p>Control de suscripción, límites mensuales y checkout seguro.</p>
+        <p>Plan actual, límites, estado de suscripción y opciones de actualización.</p>
       </div>
       <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
     </div>
@@ -4309,16 +4647,29 @@ function renderBilling() {
 
     <div style="margin-top:18px;">${renderUsageCard()}</div>
 
-    <section class="grid cols-3" style="margin-top:18px;">
-      ${['starter','enterprise','custom'].map(planKey => renderPlanCard(planKey, usage.planKey, provider)).join('')}
+    <section class="grid cols-4" style="margin-top:18px;">
+      ${['crm_basico','crm_pro','ganadero_pro','crm_empresa'].map(planKey => renderPlanCard(planKey, usage.planKey, provider)).join('')}
     </section>
 
     <section class="card" style="margin-top:18px;">
       <h2>Estado de suscripción</h2>
       <p><strong>Plan efectivo:</strong> ${escapeHtml(usage.plan.name)}</p>
-      <p><strong>Estado proveedor:</strong> ${escapeHtml(state.billing?.status || state.company?.subscription_status || 'inactive')}</p>
+      <p><strong>Estado:</strong> ${escapeHtml(status)}</p>
+      <p><strong>Proveedor:</strong> ${escapeHtml(state.billing?.payment_provider || state.company?.payment_provider || provider)}</p>
       <p><strong>Vigencia:</strong> ${escapeHtml(state.billing?.current_period_end || state.company?.plan_current_period_end || 'Sin periodo activo')}</p>
-      <p class="help">El plan solo debe cambiar por webhook de pago o por actualización administrativa. El frontend no puede marcar una empresa como pagada.</p>
+      <p><strong>Próxima facturación:</strong> ${escapeHtml(state.billing?.next_billing_date || state.company?.next_billing_date || 'Pendiente')}</p>
+      <div class="notice">Este módulo muestra facturas comerciales internas. NCF/e-CF fiscal se implementará después con backend seguro.</div>
+      <p class="help">En esta fase el cambio real de plan debe venir por webhook de pago o ajuste administrativo. El frontend no debe marcar una empresa como pagada.</p>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Setup e implementación</h2>
+      <div class="bullets">
+        <span>Setup básico desde RD$5,000.</span>
+        <span>Setup Pro desde RD$12,000.</span>
+        <span>Implementación ganadera desde RD$25,000.</span>
+        <span>Personalizaciones por paquete cerrado o RD$1,500 a RD$3,500/hora.</span>
+      </div>
     </section>
   `;
 }
@@ -4326,19 +4677,23 @@ function renderBilling() {
 function renderPlanCard(planKey, currentPlanKey, provider) {
   const plan = PLAN_CATALOG[planKey];
   const isCurrent = planKey === currentPlanKey;
+  const features = (plan.features || []).slice(0, 7).map(key => FEATURE_DEFINITIONS[key]?.label || key);
   return `
     <div class="card plan-card ${isCurrent ? 'current' : ''}">
-      <div class="plan-topline">${isCurrent ? 'Plan actual' : provider}</div>
+      <div class="plan-topline">${isCurrent ? 'Plan actual' : escapeHtml(provider)}</div>
       <h2>${escapeHtml(plan.name)}</h2>
-      <div class="plan-price">${plan.price === null ? 'A cotizar' : `US$${plan.price}`}<span>${plan.price === null ? '' : '/mes'}</span></div>
+      <div class="plan-price">${escapeHtml(plan.priceLabel || (plan.price === null ? 'Personalizado' : `RD$${numberFmt(plan.price, 0)}`))}<span>${plan.price === null ? '' : '/mes'}</span></div>
       <p>${escapeHtml(plan.description)}</p>
       <div class="bullets">
-        <span>${plan.quoteLimit} cotizaciones al mes.</span>
+        <span>${formatLimit(normalizeFiniteLimit(plan.maxClients))} clientes.</span>
+        <span>${formatLimit(normalizeFiniteLimit(plan.maxQuotesPerMonth ?? plan.quoteLimit))} cotizaciones al mes.</span>
+        <span>${formatLimit(normalizeFiniteLimit(plan.maxInvoicesPerMonth))} facturas comerciales al mes.</span>
         <span>${plan.users} usuario${plan.users > 1 ? 's' : ''} incluido${plan.users > 1 ? 's' : ''}.</span>
-        <span>${planKey === 'starter' ? 'PDF, links públicos y WhatsApp manual.' : planKey === 'enterprise' ? 'Plantillas, catálogo amplio y reportes.' : 'Volumen, usuarios e integraciones a medida.'}</span>
+        <span>${escapeHtml(plan.setupLabel || '')}</span>
       </div>
+      <details class="plan-features"><summary>Funciones incluidas</summary><p>${features.map(escapeHtml).join(' · ')}</p></details>
       <button class="btn ${isCurrent ? 'secondary' : 'primary'} full" data-action="checkout" data-plan="${planKey}" ${isCurrent ? 'disabled' : ''}>
-        ${isCurrent ? 'Activo' : plan.price === null ? 'Solicitar cotización' : 'Elegir plan'}
+        ${isCurrent ? 'Activo' : plan.price === null ? 'Solicitar propuesta' : 'Actualizar plan'}
       </button>
     </div>
   `;
@@ -4705,7 +5060,7 @@ async function saveCompany(form) {
 }
 
 async function saveClient(form) {
-  if (!requirePermission('clients_write')) return;
+  if (!guardAction('client_create')) return;
   const fd = new FormData(form);
   const payload = {
     company_id: state.company.id,
@@ -4733,7 +5088,7 @@ async function saveClient(form) {
 }
 
 async function deleteClient(id) {
-  if (!requirePermission('clients_delete')) return;
+  if (!guardAction('client_delete')) return;
   const hasQuotes = state.quotes.some(q => q.client_id === id);
   if (hasQuotes) {
     toast('No puedes borrar un cliente con cotizaciones asociadas.');
@@ -4776,20 +5131,14 @@ function collectQuoteForm(form) {
 }
 
 async function saveQuote(form) {
-  if (!requirePermission('quotes_write')) return;
+  const isEditingQuote = Boolean(form.dataset.id);
+  if (!guardAction(isEditingQuote ? 'quote_update' : 'quote_create', { skipLimit: isEditingQuote })) return;
   const quote = collectQuoteForm(form);
   const existingQuote = quote.id ? state.quotes.find(q => q.id === quote.id) : null;
   if (!quote.items.length) {
     toast('Agrega al menos un item con descripción.');
     return;
   }
-  if (!quote.id && !canCreateQuote()) {
-    toast('Llegaste al límite mensual de tu plan.');
-    setRoute('billing');
-    render();
-    return;
-  }
-
   if (mode === 'supabase') {
     const quotePayload = {
       company_id: state.company.id,
@@ -4864,7 +5213,7 @@ async function saveQuote(form) {
 }
 
 async function deleteQuote(id) {
-  if (!requirePermission('quotes_delete')) return;
+  if (!guardAction('quote_delete')) return;
   if (!confirm('¿Borrar esta cotización?')) return;
   if (mode === 'supabase') {
     const { error } = await supabaseClient.from('quotes').delete().eq('id', id);
@@ -5088,13 +5437,7 @@ function addCatalogItemToQuote() {
 }
 
 async function saveProductService(form) {
-  if (!requirePermission('catalog_write')) return;
-  const usage = getPlanUsage();
-  const limit = Number(usage.plan.catalogLimit || 0);
-  if (activeProductsServices().length >= limit) {
-    toast(`Llegaste al límite de catálogo del plan ${usage.plan.name}.`);
-    return;
-  }
+  if (!guardAction('catalog_create')) return;
   const fd = new FormData(form);
   const payload = {
     company_id: state.company.id,
@@ -5128,7 +5471,7 @@ async function saveProductService(form) {
 }
 
 async function deleteProductService(id) {
-  if (!requirePermission('catalog_delete')) return;
+  if (!guardAction('catalog_delete')) return;
   if (!confirm('¿Desactivar este producto o servicio del catálogo?')) return;
   if (mode === 'supabase') {
     const { error } = await supabaseClient.from('products_services').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id);
@@ -5144,7 +5487,7 @@ async function deleteProductService(id) {
 }
 
 async function seedCatalogForBusinessType() {
-  if (!requirePermission('catalog_write')) return;
+  if (!guardAction('catalog_create')) return;
   const businessType = state.company?.business_type || 'general';
   const seeds = getDefaultCatalogSeeds(businessType);
   if (!seeds.length) {
@@ -5164,23 +5507,36 @@ async function seedCatalogForBusinessType() {
     return;
   }
 
+  const catalogResource = getPlanUsage().resources.catalog;
+  let itemsToInsert = missing;
+  if (Number.isFinite(catalogResource.limit) && missing.length > catalogResource.remaining) {
+    if (catalogResource.remaining <= 0) {
+      toast(resourceLimitMessage('catalog'));
+      setRoute('billing');
+      render();
+      return;
+    }
+    itemsToInsert = missing.slice(0, catalogResource.remaining);
+    toast(`Tu plan permite cargar ${catalogResource.remaining} item${catalogResource.remaining === 1 ? '' : 's'} más del catálogo. Se cargará una plantilla parcial.`);
+  }
+
   if (mode === 'supabase') {
-    const { error } = await supabaseClient.from('products_services').insert(missing);
+    const { error } = await supabaseClient.from('products_services').insert(itemsToInsert);
     if (error) throw error;
     await loadRemoteData();
   } else {
-    missing.forEach(item => {
+    itemsToInsert.forEach(item => {
       state.productsServices.unshift({ ...item, id: uid('prod'), created_at: new Date().toISOString() });
     });
     saveLocalState();
     render();
   }
   setRoute('catalog');
-  toast(`Catálogo base cargado: ${missing.length} item${missing.length === 1 ? '' : 's'}.`);
+  toast(`Catálogo base cargado: ${itemsToInsert.length} item${itemsToInsert.length === 1 ? '' : 's'}.`);
 }
 
 async function saveMessageTemplate(form) {
-  if (!requirePermission('templates_write')) return;
+  if (!guardAction('templates_create')) return;
   const fd = new FormData(form);
   const payload = {
     company_id: state.company.id,
@@ -5212,7 +5568,7 @@ async function saveMessageTemplate(form) {
 }
 
 async function deleteMessageTemplate(id) {
-  if (!requirePermission('templates_delete')) return;
+  if (!guardAction('templates_delete')) return;
   if (!confirm('¿Desactivar esta plantilla?')) return;
   if (mode === 'supabase') {
     const { error } = await supabaseClient.from('message_templates').update({ status: 'inactive', updated_at: new Date().toISOString() }).eq('id', id);
@@ -5228,6 +5584,7 @@ async function deleteMessageTemplate(id) {
 }
 
 function generatePdf(id) {
+  if (!guardAction('quote_pdf')) return;
   const quote = state.quotes.find(q => q.id === id);
   if (!quote) return;
   if (!window.jspdf?.jsPDF) {
@@ -5238,6 +5595,13 @@ function generatePdf(id) {
   const client = getClient(quote.client_id);
   const totals = quoteTotals(quote);
   const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+  if (getEffectivePlan().lockedPdfWatermark) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(46);
+    doc.setTextColor(220, 220, 220);
+    doc.text('DEMO', 245, 390, { angle: 35 });
+    doc.setTextColor(0, 0, 0);
+  }
   const left = 44;
   const right = 568;
   const company = state.company || defaultCompany;
@@ -5347,25 +5711,27 @@ function generatePdf(id) {
 
 async function startCheckout(planKey) {
   if (!requirePermission('billing_manage')) return;
-  if (planKey === 'custom') {
-    const subject = encodeURIComponent('CotizaFlow - plan a cotizar');
-    const body = encodeURIComponent(`Hola, deseo cotizar un plan para ${state.company?.name || 'mi empresa'}. Necesito más de 500 cotizaciones o condiciones especiales.`);
+  const normalizedPlan = normalizePlanKey(planKey);
+  const plan = PLAN_CATALOG[normalizedPlan];
+  if (!plan || normalizedPlan === 'demo') {
+    toast('Plan inválido para checkout.');
+    return;
+  }
+  if (normalizedPlan === 'crm_empresa' || plan.price === null) {
+    const subject = encodeURIComponent(`CotizaFlow - ${plan.name}`);
+    const body = encodeURIComponent(`Hola, deseo información para ${plan.name} de ${state.company?.name || 'mi empresa'}. Necesito revisar implementación, usuarios, límites e integraciones.`);
     window.location.href = `mailto:${config.salesEmail || 'ventas@cotizaflow.app'}?subject=${subject}&body=${body}`;
     return;
   }
   if (mode !== 'supabase') {
-    toast('Publica y entra con Supabase antes de cobrar planes reales.');
-    return;
-  }
-  if (!PLAN_CATALOG[planKey] || ['free', 'custom'].includes(planKey)) {
-    toast('Plan inválido.');
+    toast('Publica y entra con Supabase antes de cobrar planes reales. En demo local solo se simula el uso.');
     return;
   }
   const { data, error } = await supabaseClient.functions.invoke('create-checkout', {
-    body: { plan: planKey, referral_code: getPendingReferralCode() }
+    body: { plan: normalizedPlan, referral_code: getPendingReferralCode() }
   });
   if (error) throw error;
-  if (!data?.url) throw new Error('El backend no devolvió URL de checkout. Revisa variables de Lemon Squeezy.');
+  if (!data?.url) throw new Error('El backend no devolvió URL de checkout. Revisa variables de Lemon Squeezy o Paddle.');
   window.location.href = data.url;
 }
 

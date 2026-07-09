@@ -1,87 +1,101 @@
-# CotizaFlow — Fase 9
+# CotizaFlow — Fase 10C
 
-Fase 9 agrega un módulo de **Facturas comerciales y cuentas por cobrar** conectado con Cotizaciones, Clientes, roles y Dashboard. El objetivo es mantener el CRM sencillo, pero más útil: cliente → cotización → factura → pago → historial.
+Entrega incremental. No refactoriza todo el sistema ni elimina tablas existentes.
 
-## Incluye
+## Objetivo
 
-- Módulo **Facturas** en el menú principal.
-- Conversión de cotización a factura.
-- Factura en estado borrador antes de emitir.
-- Emisión de factura comercial interna.
-- Registro de pagos y abonos.
-- Saldo pendiente automático.
-- Estados: borrador, emitida, pagada parcial, pagada, vencida y anulada.
-- PDF de factura.
-- Mensaje listo para WhatsApp.
-- Historial de facturas por cliente.
-- Métricas de facturas en Dashboard.
-- Configuración de prefijo, próximo número, vencimiento y notas de factura.
-- Base de datos preparada para NCF/e-CF futuro, sin exponer llaves secretas.
+Agregar una capa interna de validaciones por plan, estado de suscripción, límites y rol. La interfaz puede mostrar u ocultar opciones, pero las acciones críticas ahora pasan por una validación común antes de crear, editar, emitir, registrar pagos, exportar o cargar plantillas.
 
-## Inteligencia por tipo de negocio
+## Cambios principales
 
-El sistema adapta el texto, las alertas y el contexto de facturación según el tipo de negocio.
+- Nueva capa frontend `evaluateActionGate()` / `guardAction()`.
+- Validación común para clientes, cotizaciones, facturas comerciales, pagos, catálogo, plantillas, Control Diario y exportaciones ganaderas.
+- Bloqueo de escritura cuando la cuenta está `suspended` o `cancelled`.
+- Aviso visible cuando la cuenta está `past_due`, `suspended` o `cancelled`.
+- Rutas directas como `#quote-new`, `#invoices`, `#milk`, `#catalog`, `#templates`, `#affiliates` e `#integrations` respetan plan y feature flags.
+- La app intenta leer `company_saas_entitlements` desde Supabase para usar límites efectivos desde base de datos si la vista existe.
+- Si la vista no existe, conserva el catálogo local de planes para mantener compatibilidad.
+- Carga de plantilla de catálogo respeta el límite del plan.
 
-Para **Asociación Ganaderos**, las facturas se manejan como ventas de insumos y servicios: alimento, medicamentos, transporte, servicios veterinarios, gestión administrativa, etc. La llegada de leche no se registra como factura; se mantiene en **Control Diario** y se liquidará aparte en una fase posterior.
+## SQL agregado
 
-Esto evita mezclar cuentas por cobrar de ventas con cuentas por pagar a productores.
+Nuevo archivo:
 
-## Flujo recomendado
+`supabase/schema_phase10c_internal_guards.sql`
 
-1. Crear cliente.
-2. Crear cotización.
-3. Cuando el cliente acepta, abrir la cotización.
-4. Presionar **Convertir en factura**.
-5. Revisar la factura en borrador.
-6. Presionar **Emitir**.
-7. Registrar pagos o abonos.
-8. Revisar saldo pendiente y vencimientos.
+Crea:
 
-## Reglas de buenas prácticas incluidas
+- `company_usage_events`
+- `company_subscription_state()`
+- `company_can_write()`
+- `company_resource_usage()`
+- `company_can_create_resource()`
+- `company_action_allowed()`
 
-- Una factura nace como borrador.
-- Una factura emitida no debe tratarse como una cotización editable.
-- Si hay error, se anula en lugar de borrarla.
-- La factura conserva copia propia de items, precios, impuestos y totales.
-- El PDF indica que es documento comercial interno.
-- La fiscalidad NCF/e-CF queda preparada para una fase posterior con backend seguro.
+También agrega políticas RLS restrictivas sobre tablas existentes cuando están disponibles:
 
-## Roles
+- `clients`
+- `quotes`
+- `quote_items`
+- `invoices`
+- `invoice_items`
+- `invoice_payments`
+- `products_services`
+- `message_templates`
+- `milk_deliveries`
+- `company_members`
 
-- Superusuario: acceso total.
-- Administrador: facturas, pagos, configuración, clientes y operación.
-- Ventas: puede crear facturas desde cotizaciones.
-- Contabilidad: puede emitir, anular y registrar pagos.
-- Operador diario: mantiene Control Diario, sin permisos completos de facturación.
-- Solo lectura: consulta facturas sin editar.
+Estas políticas no reemplazan las anteriores; se agregan como restricciones adicionales.
 
-## Orden de instalación recomendado
+## Orden recomendado de SQL
 
-1. Mantén tu `config.js` real. No lo reemplaces por uno vacío.
-2. Reemplaza `index.html`, `app.js`, `styles.css`, `public.html` y `README.md`.
-3. Si no has ejecutado las migraciones ganaderas, ejecuta:
-   - `supabase/schema_phase8b_dairy_crm_settings.sql`
-4. Si no has ejecutado roles/catálogo, ejecuta:
-   - `supabase/schema_phase8d_roles_catalog.sql`
-5. Ejecuta la nueva migración:
-   - `supabase/schema_phase9_invoices.sql`
-6. Sube los archivos a GitHub Pages.
-7. Haz `Ctrl + F5` en el navegador.
-8. Prueba convertir una cotización en factura.
+1. `supabase/schema_phase8b_dairy_crm_settings.sql`
+2. `supabase/schema_phase8d_roles_catalog.sql`
+3. `supabase/schema_phase9_invoices.sql`
+4. `supabase/schema_phase10a_saas_plans.sql`
+5. `supabase/schema_phase10b_superuser_roles.sql`
+6. `supabase/schema_phase10c_internal_guards.sql`
 
-## Archivos principales actualizados
+## Archivos principales a reemplazar
 
-- `index.html`
+Conserva tu `config.js` real.
+
+Reemplaza:
+
 - `app.js`
 - `styles.css`
-- `public.html`
 - `README.md`
-- `supabase/schema_phase9_invoices.sql`
 
-## Nota fiscal
+Agrega:
 
-Fase 9 maneja factura comercial interna y cuentas por cobrar. No declara todavía cumplimiento fiscal oficial DGII/e-CF. Para eso se requiere una fase fiscal con NCF/e-NCF, secuencias, validaciones y backend seguro mediante Supabase Edge Functions o Cloudflare Workers. No debe colocarse `service_role` ni llaves secretas en frontend o GitHub.
+- `supabase/schema_phase10c_internal_guards.sql`
 
-## Seguridad
+## Pruebas recomendadas
 
-El frontend sigue usando solo la Publishable key de Supabase. Las operaciones sensibles futuras, como emitir comprobantes fiscales oficiales, webhooks de pagos o creación administrativa de usuarios Auth, deben ir por backend seguro.
+### Demo
+
+- Debe bloquear creación al llegar al límite de clientes, cotizaciones, facturas o catálogo.
+- Debe mostrar actualización de plan.
+- No debe permitir CSV ganadero.
+
+### CRM Básico
+
+- Debe permitir clientes, cotizaciones, catálogo, facturas comerciales simples.
+- Debe bloquear pagos parciales y cuentas por cobrar avanzadas.
+- Debe bloquear módulo ganadero.
+
+### CRM Pro
+
+- Debe permitir facturas comerciales, pagos parciales, cuentas por cobrar y exportaciones normales.
+- Debe bloquear Control Diario ganadero si no es Ganadero Pro.
+
+### Ganadero Pro
+
+- Si la empresa es Asociación Ganaderos, debe permitir Control Diario, PDF y CSV ganadero.
+
+### Suspended / Cancelled
+
+- Debe permitir login y consulta.
+- Debe bloquear creación o modificación de clientes, cotizaciones, facturas, pagos, catálogo y registros de leche.
+- Debe permitir ver Configuración > Planes y pagos.
+

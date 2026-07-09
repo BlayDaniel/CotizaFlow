@@ -586,3 +586,30 @@ html[data-theme="black"] .field-link { color: var(--primary); }
 html[data-theme="black"] .totals-box,
 html[data-theme="black"] .totals-box > div { border-color: var(--border); color: #cbd5e1; }
 html[data-theme="black"] .mini-list span { background: rgba(45,212,191,.10); border-color: rgba(45,212,191,.20); color: #ccfbf1; }
+
+/* Fase 10A: límites SaaS y tarjetas de upgrade */
+.usage-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mini-usage { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: rgba(255,255,255,.55); }
+.mini-usage strong { display: block; margin-bottom: 4px; }
+.mini-usage span { color: var(--muted); font-size: 13px; }
+.usage-bar.small { height: 8px; margin: 8px 0 0; }
+.badge.locked { background: #fef3c7; color: #92400e; border-color: #fde68a; width: fit-content; }
+.upgrade-card .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.plan-features { margin-top: 12px; color: var(--muted); font-size: 13px; }
+.plan-features summary { cursor: pointer; font-weight: 700; color: var(--text); }
+.notice.danger { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+html[data-theme="black"] .mini-usage { background: rgba(15,23,42,.72); border-color: rgba(148,163,184,.18); }
+html[data-theme="black"] .badge.locked { background: rgba(245,158,11,.16); color: #fcd34d; border-color: rgba(252,211,77,.25); }
+html[data-theme="black"] .notice.danger { background: rgba(153,27,27,.18); color: #fca5a5; border-color: rgba(252,165,165,.22); }
+@media (max-width: 900px) { .usage-grid { grid-template-columns: 1fr; } }
+
+/* Fase 10C: avisos de suscripción y bloqueo interno */
+.subscription-notice {
+  margin-top: 4px;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 800;
+}
+.badge.danger { background: #fee2e2; color: #991b1b; border-color: #fecaca; width: fit-content; }
+html[data-theme="black"] .subscription-notice { color: #fcd34d; }
+html[data-theme="black"] .badge.danger { background: rgba(153,27,27,.22); color: #fca5a5; border-color: rgba(252,165,165,.26); }
