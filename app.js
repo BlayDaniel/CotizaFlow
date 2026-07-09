@@ -16,6 +16,40 @@ const PLAN_CATALOG = {
 
 const ACTIVE_BILLING_STATUSES = new Set(['active', 'trialing', 'on_trial', 'paid']);
 
+
+const ROLE_DEFINITIONS = {
+  superuser: {
+    label: 'Superusuario',
+    description: 'Acceso total: empresa, usuarios, ventas, catálogo, reportes, pagos, referidos e integraciones.',
+    permissions: ['*']
+  },
+  admin: {
+    label: 'Administrador',
+    description: 'Administra operación diaria, configuración funcional, ventas, clientes, catálogo y reportes.',
+    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','quotes_delete','clients_read','clients_write','clients_delete','catalog_read','catalog_write','catalog_delete','templates_read','templates_write','templates_delete','milk_read','milk_write','milk_delete','milk_export','settings_company','billing_manage','affiliates_manage','integrations_manage','users_manage']
+  },
+  ventas: {
+    label: 'Ventas',
+    description: 'Gestiona clientes, cotizaciones, seguimiento y catálogo en modo operativo.',
+    permissions: ['dashboard_read','reports_read','quotes_read','quotes_write','clients_read','clients_write','catalog_read','templates_read']
+  },
+  operador_diario: {
+    label: 'Operador diario',
+    description: 'Registra llegadas diarias, productores y consulta el historial operativo.',
+    permissions: ['dashboard_read','milk_read','milk_write','clients_read','clients_write']
+  },
+  contabilidad: {
+    label: 'Contabilidad',
+    description: 'Consulta reportes, pagos mensuales, control diario y datos necesarios para cierre.',
+    permissions: ['dashboard_read','reports_read','milk_read','milk_export','clients_read','quotes_read','billing_manage']
+  },
+  lector: {
+    label: 'Solo lectura',
+    description: 'Consulta información sin crear, editar o eliminar registros.',
+    permissions: ['dashboard_read','reports_read','quotes_read','clients_read','catalog_read','templates_read','milk_read']
+  }
+};
+
 let supabaseClient = null;
 let mode = 'local';
 let state = {
@@ -34,6 +68,9 @@ let state = {
   messageTemplates: [],
   productsServices: [],
   businessTemplates: [],
+  teamMembers: [],
+  currentMember: null,
+  teamStorageMode: 'local',
   milkRecords: [],
   milkStorageMode: 'local',
   milkFilters: { month: currentMonthValue() },
@@ -82,6 +119,9 @@ const localDefaultState = {
   messageTemplates: [],
   productsServices: [],
   businessTemplates: [],
+  teamMembers: [],
+  currentMember: null,
+  teamStorageMode: 'local',
   milkRecords: [],
   milkStorageMode: 'local',
   milkFilters: { month: currentMonthValue() },
@@ -113,13 +153,13 @@ const TRANSLATIONS = {
   es: {
     language: 'Idioma', spanish: 'Español', english: 'Inglés', dashboard: 'Dashboard', quotes: 'Cotizaciones',
     newQuote: 'Nueva cotización', followup: 'Seguimiento', clients: 'CRM clientes', catalog: 'Catálogo', templates: 'Plantillas',
-    settings: 'Configuración', milkControl: 'Control Diario', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones',
+    settings: 'Configuración', milkControl: 'Control Diario', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones', users: 'Usuarios y roles',
     back: 'Regresar', theme: 'Temas', white: 'White', black: 'Black', saveSettings: 'Guardar configuración'
   },
   en: {
     language: 'Language', spanish: 'Spanish', english: 'English', dashboard: 'Dashboard', quotes: 'Quotes',
     newQuote: 'New quote', followup: 'Follow-up', clients: 'Client CRM', catalog: 'Catalog', templates: 'Templates',
-    settings: 'Settings', milkControl: 'Daily control', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations',
+    settings: 'Settings', milkControl: 'Daily control', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations', users: 'Users & roles',
     back: 'Back', theme: 'Themes', white: 'White', black: 'Black', saveSettings: 'Save settings'
   }
 };
@@ -178,9 +218,91 @@ function renderUtilityBar() {
   return `
     <div class="utility-bar">
       <div class="utility-title">${escapeHtml(state.company?.name || 'CotizaFlow')}</div>
-      <div class="utility-actions">${renderLanguageSelector()}</div>
+      <div class="utility-actions">${currentRoleBadge()}${renderLanguageSelector()}</div>
     </div>
   `;
+}
+
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeRole(value) {
+  const role = String(value || '').trim().toLowerCase();
+  return ROLE_DEFINITIONS[role] ? role : 'lector';
+}
+
+function roleOptions(selected = 'lector') {
+  return Object.entries(ROLE_DEFINITIONS).map(([key, role]) => `
+    <option value="${key}" ${normalizeRole(selected) === key ? 'selected' : ''}>${escapeHtml(role.label)}</option>
+  `).join('');
+}
+
+function roleLabel(roleKey = '') {
+  const key = normalizeRole(roleKey);
+  return ROLE_DEFINITIONS[key]?.label || ROLE_DEFINITIONS.lector.label;
+}
+
+function roleDescription(roleKey = '') {
+  const key = normalizeRole(roleKey);
+  return ROLE_DEFINITIONS[key]?.description || '';
+}
+
+function isCompanyOwner() {
+  if (mode === 'local') return true;
+  return Boolean(state.session?.id && state.company?.owner_user_id && String(state.company.owner_user_id) === String(state.session.id));
+}
+
+function getEffectiveRoleKey() {
+  if (!state.session) return 'lector';
+  if (isCompanyOwner()) return 'superuser';
+  const email = normalizeEmail(state.session.email);
+  const bySession = (state.teamMembers || []).find(member => {
+    if (String(member.status || 'active') !== 'active') return false;
+    if (member.user_id && state.session?.id && String(member.user_id) === String(state.session.id)) return true;
+    return email && normalizeEmail(member.email) === email;
+  });
+  return normalizeRole(bySession?.role || state.currentMember?.role || 'lector');
+}
+
+function getEffectiveRole() {
+  return ROLE_DEFINITIONS[getEffectiveRoleKey()] || ROLE_DEFINITIONS.lector;
+}
+
+function can(permission) {
+  const role = getEffectiveRole();
+  return role.permissions.includes('*') || role.permissions.includes(permission);
+}
+
+function firstSettingsRoute() {
+  if (can('settings_company')) return 'settings';
+  if (can('billing_manage')) return 'billing';
+  if (can('users_manage')) return 'team';
+  if (can('affiliates_manage')) return 'affiliates';
+  if (can('integrations_manage')) return 'integrations';
+  return 'dashboard';
+}
+
+function requirePermission(permission, message = 'Tu rol no tiene permiso para realizar esta acción.') {
+  if (can(permission)) return true;
+  toast(message);
+  return false;
+}
+
+function renderAccessDenied() {
+  return `
+    <section class="card access-denied">
+      <h1>Acceso restringido</h1>
+      <p>Tu rol actual es <strong>${escapeHtml(roleLabel(getEffectiveRoleKey()))}</strong>. No tienes permiso para abrir este módulo.</p>
+      <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
+    </section>
+  `;
+}
+
+function currentRoleBadge() {
+  const key = getEffectiveRoleKey();
+  return `<span class="role-badge role-${escapeHtml(key)}">${escapeHtml(roleLabel(key))}</span>`;
 }
 
 function currentMonthValue(date = new Date()) {
@@ -392,6 +514,9 @@ function loadLocalState() {
       messageTemplates: parsed.messageTemplates || [],
       productsServices: parsed.productsServices || [],
       businessTemplates: parsed.businessTemplates || [],
+      teamMembers: parsed.teamMembers || [],
+      currentMember: parsed.currentMember || null,
+      teamStorageMode: 'local',
       milkRecords: (parsed.milkRecords || []).map(normalizeMilkRecord),
       milkStorageMode: 'local',
       milkFilters: parsed.milkFilters || { month: currentMonthValue() },
@@ -421,6 +546,9 @@ function saveLocalState() {
     messageTemplates: state.messageTemplates,
     productsServices: state.productsServices,
     businessTemplates: state.businessTemplates,
+    teamMembers: state.teamMembers,
+    currentMember: state.currentMember,
+    teamStorageMode: state.teamStorageMode,
     milkRecords: state.milkRecords,
     milkFilters: state.milkFilters,
     reportFilters: state.reportFilters,
@@ -521,6 +649,7 @@ async function loadRemoteData() {
 
     const company = await getOrCreateRemoteCompany();
     state.company = normalizeCompany(company);
+    await loadTeamMembers();
     await claimPendingReferral(state.company.id);
     await seedDefaultTemplates(state.company.id);
 
@@ -612,7 +741,13 @@ async function getOrCreateRemoteCompany() {
     .maybeSingle();
 
   if (existingError) throw existingError;
-  if (existing) return existing;
+  if (existing) {
+    await ensureOwnerMembership(existing);
+    return existing;
+  }
+
+  const memberCompany = await getCompanyByMembership();
+  if (memberCompany) return memberCompany;
 
   const { data, error } = await supabaseClient
     .from('companies')
@@ -631,7 +766,109 @@ async function getOrCreateRemoteCompany() {
     .single();
 
   if (error) throw error;
+  await ensureOwnerMembership(data);
   return data;
+}
+
+async function getCompanyByMembership() {
+  if (!state.session?.email) return null;
+  try {
+    const email = normalizeEmail(state.session.email);
+    const { data, error } = await supabaseClient
+      .from('company_members')
+      .select('*, companies(*)')
+      .eq('email', email)
+      .eq('status', 'active')
+      .limit(1);
+    if (error) throw error;
+    const membership = data?.[0] || null;
+    if (!membership?.companies) return null;
+    state.currentMember = membership;
+    if (!membership.user_id && state.session?.id) {
+      try {
+        await supabaseClient
+          .from('company_members')
+          .update({ user_id: state.session.id, updated_at: new Date().toISOString() })
+          .eq('id', membership.id);
+      } catch (linkError) {
+        console.warn('No se pudo vincular user_id al miembro:', linkError.message || linkError);
+      }
+    }
+    return membership.companies;
+  } catch (error) {
+    console.warn('Roles pendientes. Ejecuta schema_phase8d_roles_catalog.sql para activar usuarios por rol:', error.message || error);
+    return null;
+  }
+}
+
+async function ensureOwnerMembership(company) {
+  if (!company?.id || !state.session?.email) return;
+  try {
+    const payload = {
+      company_id: company.id,
+      user_id: state.session.id,
+      email: normalizeEmail(state.session.email),
+      full_name: state.session.name || state.session.email,
+      role: 'superuser',
+      status: 'active',
+      created_by_user_id: state.session.id,
+      updated_at: new Date().toISOString()
+    };
+    await supabaseClient
+      .from('company_members')
+      .upsert(payload, { onConflict: 'company_id,email' });
+  } catch (error) {
+    console.warn('No se pudo asegurar el superusuario. Ejecuta schema_phase8d_roles_catalog.sql:', error.message || error);
+  }
+}
+
+async function loadTeamMembers() {
+  state.teamStorageMode = mode === 'local' ? 'local' : 'fallback';
+  const ownerMember = {
+    id: 'owner-member',
+    company_id: state.company?.id || 'local-company',
+    user_id: state.session?.id || 'local-user',
+    email: normalizeEmail(state.session?.email || 'demo@cotizaflow.local'),
+    full_name: state.session?.name || 'Superusuario',
+    role: 'superuser',
+    status: 'active',
+    created_at: new Date().toISOString()
+  };
+
+  if (mode === 'local') {
+    const existing = state.teamMembers?.length ? state.teamMembers : [ownerMember];
+    state.teamMembers = existing;
+    state.currentMember = existing.find(m => normalizeEmail(m.email) === normalizeEmail(state.session?.email)) || ownerMember;
+    state.teamStorageMode = 'local';
+    return;
+  }
+
+  if (!supabaseClient || !state.company?.id) {
+    state.teamMembers = [ownerMember];
+    state.currentMember = ownerMember;
+    return;
+  }
+
+  try {
+    const { data, error } = await supabaseClient
+      .from('company_members')
+      .select('*')
+      .eq('company_id', state.company.id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    state.teamMembers = data?.length ? data : [ownerMember];
+    const sessionEmail = normalizeEmail(state.session?.email);
+    state.currentMember = state.teamMembers.find(member => {
+      if (String(member.status || 'active') !== 'active') return false;
+      if (member.user_id && state.session?.id && String(member.user_id) === String(state.session.id)) return true;
+      return sessionEmail && normalizeEmail(member.email) === sessionEmail;
+    }) || ownerMember;
+    state.teamStorageMode = 'supabase';
+  } catch (error) {
+    console.warn('Usuarios y roles en modo local/fallback:', error.message || error);
+    state.teamMembers = isCompanyOwner() ? [ownerMember] : [];
+    state.currentMember = isCompanyOwner() ? ownerMember : null;
+  }
 }
 
 function normalizeCompany(company) {
@@ -1106,13 +1343,13 @@ function renderApp(route) {
         <div class="brand"><span class="brand-mark">C</span> CotizaFlow</div>
         <nav>
           ${navLink('dashboard', t('dashboard'))}
-          ${navLink('reports', t('followup'))}
-          ${state.company?.business_type === 'asociacion_ganaderos' ? navLink('milk', t('milkControl')) : ''}
-          ${navLink('quotes', t('quotes'))}
-          ${navLink('clients', t('clients'))}
-          ${navLink('catalog', t('catalog'))}
-          ${navLink('templates', t('templates'))}
-          ${navLink('settings', t('settings'))}
+          ${can('reports_read') ? navLink('reports', t('followup')) : ''}
+          ${state.company?.business_type === 'asociacion_ganaderos' && can('milk_read') ? navLink('milk', t('milkControl')) : ''}
+          ${can('quotes_read') ? navLink('quotes', t('quotes')) : ''}
+          ${can('clients_read') ? navLink('clients', t('clients')) : ''}
+          ${can('catalog_read') ? navLink('catalog', t('catalog')) : ''}
+          ${can('templates_read') ? navLink('templates', t('templates')) : ''}
+          ${can('settings_company') || can('billing_manage') || can('affiliates_manage') || can('integrations_manage') || can('users_manage') ? navLink(firstSettingsRoute(), t('settings')) : ''}
         </nav>
         <div class="sidebar-footer">
           <strong>${escapeHtml(state.company?.name || 'Mi empresa')}</strong><br />
@@ -1131,8 +1368,25 @@ function navLink(route, label) {
 }
 
 function renderRoute(route) {
-  if (route.startsWith('quote-edit/')) return renderQuoteForm(route.split('/')[1]);
-  if (route.startsWith('quote-view/')) return renderQuoteView(route.split('/')[1]);
+  if (route.startsWith('quote-edit/')) return can('quotes_write') ? renderQuoteForm(route.split('/')[1]) : renderAccessDenied();
+  if (route.startsWith('quote-view/')) return can('quotes_read') ? renderQuoteView(route.split('/')[1]) : renderAccessDenied();
+
+  const routePermissions = {
+    quotes: 'quotes_read',
+    'quote-new': 'quotes_write',
+    reports: 'reports_read',
+    clients: 'clients_read',
+    catalog: 'catalog_read',
+    templates: 'templates_read',
+    milk: 'milk_read',
+    settings: 'settings_company',
+    billing: 'billing_manage',
+    affiliates: 'affiliates_manage',
+    integrations: 'integrations_manage',
+    team: 'users_manage'
+  };
+  const permission = routePermissions[route];
+  if (permission && !can(permission)) return renderAccessDenied();
 
   switch (route) {
     case 'quotes': return renderQuotes();
@@ -1146,6 +1400,7 @@ function renderRoute(route) {
     case 'billing': return renderBilling();
     case 'affiliates': return renderAffiliates();
     case 'integrations': return renderIntegrations();
+    case 'team': return renderTeamMembers();
     case 'dashboard':
     default: return renderDashboard();
   }
@@ -1734,7 +1989,7 @@ function renderQuotes() {
         <h1>Cotizaciones</h1>
         <p>Crea, edita, marca estado y genera PDF.</p>
       </div>
-      <button class="btn primary" data-route="quote-new">Nueva cotización</button>
+      ${can('quotes_write') ? '<button class="btn primary" data-route="quote-new">Nueva cotización</button>' : ''}
     </div>
     <section class="card">
       ${state.quotes.length ? renderQuotesTable(state.quotes) : `<div class="empty">No hay cotizaciones. Crea la primera.</div>`}
@@ -1770,9 +2025,9 @@ function renderQuotesTable(quotes, compact = false) {
                 ${compact ? '' : `
                   <td class="actions">
                     <button class="btn secondary small" data-route="quote-view/${quote.id}">Ver</button>
-                    <button class="btn secondary small" data-route="quote-edit/${quote.id}">Editar</button>
+                    ${can('quotes_write') ? `<button class="btn secondary small" data-route="quote-edit/${quote.id}">Editar</button>` : ''}
                     <button class="btn secondary small" data-action="pdf" data-id="${quote.id}">PDF</button>
-                    <button class="btn danger small" data-action="delete-quote" data-id="${quote.id}">Borrar</button>
+                    ${can('quotes_delete') ? `<button class="btn danger small" data-action="delete-quote" data-id="${quote.id}">Borrar</button>` : ''}
                   </td>
                 `}
               </tr>
@@ -1951,10 +2206,10 @@ function renderClientCrmTable(clients) {
                 </td>
                 <td>
                   <div class="actions">
-                    <button class="btn secondary small" data-route="quote-new" data-prefill-client="${client.id}">Cotizar</button>
-                    ${state.company?.business_type === 'asociacion_ganaderos' ? `<button class="btn secondary small" data-route="milk" data-prefill-milk-client="${client.id}">Control Diario</button>` : ''}
+                    ${can('quotes_write') ? `<button class="btn secondary small" data-route="quote-new" data-prefill-client="${client.id}">Cotizar</button>` : ''}
+                    ${state.company?.business_type === 'asociacion_ganaderos' && can('milk_write') ? `<button class="btn secondary small" data-route="milk" data-prefill-milk-client="${client.id}">Control Diario</button>` : ''}
                     ${stats.lastQuote ? `<button class="btn secondary small" data-route="quote-view/${stats.lastQuote.id}">Ver última</button>` : ''}
-                    <button class="btn danger small" data-action="delete-client" data-id="${client.id}">Borrar</button>
+                    ${can('clients_delete') ? `<button class="btn danger small" data-action="delete-client" data-id="${client.id}">Borrar</button>` : ''}
                   </div>
                 </td>
               </tr>
@@ -1984,6 +2239,54 @@ function businessTypeLabel(value) {
 
 function businessTypeOptions(selected = 'general') {
   return BUSINESS_TYPES.map(([key, label]) => `<option value="${key}" ${String(selected || 'general') === key ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+}
+
+
+const DAIRY_CATALOG_SEEDS = [
+  { business_type: 'asociacion_ganaderos', name: 'Alimento concentrado para ganado', description: 'Saco de alimento concentrado para vacas lecheras.', category: 'Alimentos', unit: 'saco', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Melaza para ganado', description: 'Melaza usada como suplemento energético.', category: 'Alimentos', unit: 'galón', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Sal mineralizada', description: 'Suplemento mineral para ganado.', category: 'Suplementos', unit: 'saco', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Vitaminas y reconstituyentes', description: 'Producto veterinario de apoyo nutricional.', category: 'Veterinaria', unit: 'unidad', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Desparasitante bovino', description: 'Tratamiento desparasitante para ganado.', category: 'Veterinaria', unit: 'unidad', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Vacuna bovina', description: 'Vacuna o biológico veterinario según disponibilidad.', category: 'Veterinaria', unit: 'dosis', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Servicio veterinario', description: 'Consulta o asistencia veterinaria básica.', category: 'Servicios', unit: 'servicio', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Inseminación artificial', description: 'Servicio de inseminación artificial bovina.', category: 'Servicios', unit: 'servicio', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Transporte de leche', description: 'Servicio de ruta o acarreo de leche.', category: 'Logística', unit: 'servicio', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Análisis de calidad de leche', description: 'Prueba básica de calidad, grasa, densidad o control sanitario.', category: 'Calidad', unit: 'servicio', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Tanque o cubeta lechera', description: 'Recipiente para manejo o transporte de leche.', category: 'Equipos', unit: 'unidad', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Manguera / accesorio de ordeño', description: 'Accesorio para equipo o sala de ordeño.', category: 'Equipos', unit: 'unidad', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Detergente alcalino para ordeño', description: 'Producto de limpieza para equipos de ordeño.', category: 'Higiene', unit: 'galón', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Sellador de pezones', description: 'Producto para higiene y prevención posterior al ordeño.', category: 'Higiene', unit: 'unidad', default_quantity: 1, unit_price: 0, cost: 0 },
+  { business_type: 'asociacion_ganaderos', name: 'Gestión administrativa asociación', description: 'Cargo administrativo, certificación o servicio interno de la asociación.', category: 'Administración', unit: 'servicio', default_quantity: 1, unit_price: 0, cost: 0 }
+];
+
+function getDefaultCatalogSeeds(businessType = 'general') {
+  const templates = (state.businessTemplates || []).filter(t => t.business_type === businessType || t.business_type === 'general');
+  const dairy = businessType === 'asociacion_ganaderos' ? DAIRY_CATALOG_SEEDS : [];
+  const merged = [...templates, ...dairy];
+  const seen = new Set();
+  return merged.filter(item => {
+    const key = normalizeTextKey([item.category, item.name].filter(Boolean).join('|'));
+    if (!item.name || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function catalogSeedToProduct(seed) {
+  return {
+    company_id: state.company?.id || 'local-company',
+    name: String(seed.name || '').trim(),
+    description: String(seed.description || '').trim(),
+    category: String(seed.category || '').trim(),
+    unit: String(seed.unit || 'unidad').trim(),
+    default_quantity: Number(seed.default_quantity || 1),
+    unit_price: Number(seed.unit_price || 0),
+    cost: Number(seed.cost || 0),
+    tax_rate: Number(seed.tax_rate ?? state.company?.tax_rate ?? 0),
+    is_active: true,
+    updated_at: new Date().toISOString()
+  };
 }
 
 function activeProductsServices() {
@@ -2020,6 +2323,8 @@ function renderCatalog() {
   const catalogLimit = Number(usage.plan.catalogLimit || 0);
   const reached = products.length >= catalogLimit;
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
+  const canWriteCatalog = can('catalog_write');
+  const seedCount = getDefaultCatalogSeeds(state.company?.business_type || 'general').length;
 
   return `
     <div class="page-header">
@@ -2028,7 +2333,7 @@ function renderCatalog() {
         <p>Servicios y productos frecuentes para crear cotizaciones más rápido.</p>
       </div>
       <div class="header-actions">
-        <button class="btn secondary" data-action="seed-catalog">Cargar plantilla ${escapeHtml(businessTypeLabel(state.company?.business_type))}</button>
+        ${canWriteCatalog ? `<button class="btn secondary" data-action="seed-catalog">Cargar plantilla ${escapeHtml(businessTypeLabel(state.company?.business_type))}${seedCount ? ` (${seedCount})` : ''}</button>` : ''}
       </div>
     </div>
 
@@ -2043,19 +2348,19 @@ function renderCatalog() {
     <section class="card" style="margin-top:18px;">
       <h2>Agregar producto / servicio</h2>
       <form data-form="product-service" class="form-grid three">
-        <div class="field"><label>Nombre</label><input name="name" required placeholder="Instalación cámara IP" ${reached ? 'disabled' : ''} /></div>
-        <div class="field"><label>Categoría</label><input name="category" placeholder="CCTV, Taller, Aire..." ${reached ? 'disabled' : ''} /></div>
+        <div class="field"><label>Nombre</label><input name="name" required placeholder="Instalación cámara IP" ${reached || !canWriteCatalog ? 'disabled' : ''} /></div>
+        <div class="field"><label>Categoría</label><input name="category" placeholder="CCTV, Taller, Aire..." ${reached || !canWriteCatalog ? 'disabled' : ''} /></div>
         <div class="field"><label>Unidad</label>
-          <select name="unit" ${reached ? 'disabled' : ''}>
+          <select name="unit" ${reached || !canWriteCatalog ? 'disabled' : ''}>
             ${['servicio','unidad','hora','día','paquete','m2','m3','kg'].map(u => `<option value="${u}">${u}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><label>Cantidad por defecto</label><input name="default_quantity" type="number" step="0.01" min="0" value="1" ${reached ? 'disabled' : ''} /></div>
-        <div class="field"><label>Precio venta</label><input name="unit_price" type="number" step="0.01" min="0" value="0" ${reached ? 'disabled' : ''} /></div>
-        <div class="field"><label>Costo interno opcional</label><input name="cost" type="number" step="0.01" min="0" value="0" ${reached ? 'disabled' : ''} /></div>
-        <div class="field"><label>Impuesto % opcional</label><input name="tax_rate" type="number" step="0.01" min="0" value="${escapeHtml(state.company?.tax_rate || 0)}" ${reached ? 'disabled' : ''} /></div>
-        <div class="field" style="grid-column:1/-1;"><label>Descripción para cotización</label><textarea name="description" placeholder="Descripción que se insertará en la cotización" ${reached ? 'disabled' : ''}></textarea></div>
-        <button class="btn primary" type="submit" ${reached ? 'disabled' : ''}>Guardar en catálogo</button>
+        <div class="field"><label>Cantidad por defecto</label><input name="default_quantity" type="number" step="0.01" min="0" value="1" ${reached || !canWriteCatalog ? 'disabled' : ''} /></div>
+        <div class="field"><label>Precio venta</label><input name="unit_price" type="number" step="0.01" min="0" value="0" ${reached || !canWriteCatalog ? 'disabled' : ''} /></div>
+        <div class="field"><label>Costo interno opcional</label><input name="cost" type="number" step="0.01" min="0" value="0" ${reached || !canWriteCatalog ? 'disabled' : ''} /></div>
+        <div class="field"><label>Impuesto % opcional</label><input name="tax_rate" type="number" step="0.01" min="0" value="${escapeHtml(state.company?.tax_rate || 0)}" ${reached || !canWriteCatalog ? 'disabled' : ''} /></div>
+        <div class="field" style="grid-column:1/-1;"><label>Descripción para cotización</label><textarea name="description" placeholder="Descripción que se insertará en la cotización" ${reached || !canWriteCatalog ? 'disabled' : ''}></textarea></div>
+        <button class="btn primary" type="submit" ${reached || !canWriteCatalog ? 'disabled' : ''}>Guardar en catálogo</button>
       </form>
     </section>
 
@@ -2084,7 +2389,7 @@ function renderProductsServicesTable(products) {
                 <td>${money(price)}</td>
                 <td>${cost ? money(cost) : '-'}</td>
                 <td>${cost ? `${margin}%` : '-'}</td>
-                <td><button class="btn danger small" data-action="delete-product-service" data-id="${item.id}">Desactivar</button></td>
+                <td>${can('catalog_delete') ? `<button class="btn danger small" data-action="delete-product-service" data-id="${item.id}">Desactivar</button>` : '<span class="help">Solo lectura</span>'}</td>
               </tr>
             `;
           }).join('')}
@@ -2158,11 +2463,12 @@ function renderLogoPreview(c) {
 
 function renderConfigNav(active = 'settings') {
   const cards = [
-    ['settings', t('company'), 'Datos fiscales, logo, temas y formato de cotización'],
-    ['billing', t('billing'), 'Suscripción, límites y checkout'],
-    ['affiliates', t('affiliates'), 'Código, comisiones y enlace'],
-    ['integrations', t('integrations'), 'Estado técnico y próximos conectores']
-  ];
+    ['settings', t('company'), 'Datos fiscales, logo, temas y formato de cotización', 'settings_company'],
+    ['billing', t('billing'), 'Suscripción, límites y checkout', 'billing_manage'],
+    ['team', t('users'), 'Superusuario, roles y permisos por usuario', 'users_manage'],
+    ['affiliates', t('affiliates'), 'Código, comisiones y enlace', 'affiliates_manage'],
+    ['integrations', t('integrations'), 'Estado técnico y próximos conectores', 'integrations_manage']
+  ].filter(([, , , permission]) => can(permission));
   return `
     <section class="grid cols-4 config-grid config-nav-grid">
       ${cards.map(([route, title, subtitle]) => `
@@ -2758,6 +3064,7 @@ async function insertMilkDeliverySupabase(payload, clientId) {
 }
 
 async function saveMilkDelivery(form) {
+  if (!requirePermission('milk_write')) return;
   const fd = new FormData(form);
   const dairyDefaults = getDairyDefaults();
   const producerClient = await resolveMilkProducerClient(fd.get('producer_client_id'), fd.get('new_producer_name'));
@@ -2817,6 +3124,7 @@ async function saveMilkDelivery(form) {
 }
 
 async function deleteMilkRecord(id) {
+  if (!requirePermission('milk_delete')) return;
   if (!confirm('¿Borrar este registro de leche?')) return;
   if (mode === 'supabase' && supabaseClient && state.milkStorageMode === 'supabase') {
     const { error } = await supabaseClient.from('milk_deliveries').delete().eq('id', id);
@@ -2830,6 +3138,7 @@ async function deleteMilkRecord(id) {
 }
 
 function generateMilkPdf() {
+  if (!requirePermission('milk_export')) return;
   if (!window.jspdf?.jsPDF) {
     toast('jsPDF no está disponible. Revisa tu conexión.');
     return;
@@ -2896,6 +3205,7 @@ function generateMilkPdf() {
 }
 
 function exportMilkCsv() {
+  if (!requirePermission('milk_export')) return;
   const month = state.milkFilters?.month || currentMonthValue();
   const records = getMilkRecordsForMonth(month);
   if (!records.length) {
@@ -2927,6 +3237,165 @@ function exportMilkCsv() {
   toast('CSV generado.');
 }
 
+
+function renderTeamMembers() {
+  const members = state.teamMembers || [];
+  const activeMembers = members.filter(member => String(member.status || 'active') === 'active');
+  const ownerEmail = normalizeEmail(state.session?.email || '');
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Usuarios y roles</h1>
+        <p>Define quién puede cotizar, registrar Control Diario, ver reportes, administrar pagos o configurar la empresa.</p>
+      </div>
+      <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
+    </div>
+
+    ${renderConfigNav('team')}
+
+    <section class="grid cols-3" style="margin-top:18px;">
+      <div class="card metric"><span>Tu rol</span><strong>${escapeHtml(roleLabel(getEffectiveRoleKey()))}</strong></div>
+      <div class="card metric"><span>Usuarios activos</span><strong>${activeMembers.length}</strong></div>
+      <div class="card metric"><span>Modo roles</span><strong>${state.teamStorageMode === 'supabase' ? 'Supabase' : 'Local'}</strong></div>
+    </section>
+
+    ${state.teamStorageMode !== 'supabase' && mode === 'supabase' ? `
+      <div class="notice warning" style="margin-top:18px;">
+        Ejecuta <code>supabase/schema_phase8d_roles_catalog.sql</code> para activar usuarios y roles con persistencia real en Supabase.
+      </div>
+    ` : ''}
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Agregar o actualizar usuario</h2>
+      <form data-form="team-member" class="form-grid three">
+        <div class="field"><label>Nombre</label><input name="full_name" placeholder="José Pérez" /></div>
+        <div class="field"><label>Correo</label><input name="email" type="email" required placeholder="usuario@empresa.com" /></div>
+        <div class="field"><label>Rol</label><select name="role">${roleOptions('ventas')}</select></div>
+        <div class="field"><label>Estado</label>
+          <select name="status">
+            <option value="active">Activo</option>
+            <option value="inactive">Inactivo</option>
+          </select>
+        </div>
+        <div class="field" style="grid-column:1/-1;">
+          <p class="help">El usuario debe crear cuenta con ese mismo correo. Al entrar, la app lo vinculará a esta empresa y aplicará su rol.</p>
+        </div>
+        <button class="btn primary" type="submit">Guardar usuario</button>
+      </form>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Roles actuales</h2>
+      ${members.length ? `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Usuario</th><th>Correo</th><th>Rol</th><th>Permisos</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <tbody>
+              ${members.map(member => {
+                const roleKey = normalizeRole(member.role);
+                const isSelf = normalizeEmail(member.email) === ownerEmail || (member.user_id && state.session?.id && String(member.user_id) === String(state.session.id));
+                const isOwnerSuper = isSelf && isCompanyOwner();
+                return `
+                  <tr>
+                    <td><strong>${escapeHtml(member.full_name || 'Sin nombre')}</strong>${isSelf ? '<br><span class="help">Tu usuario</span>' : ''}</td>
+                    <td>${escapeHtml(member.email || '')}</td>
+                    <td>${escapeHtml(roleLabel(roleKey))}</td>
+                    <td><span class="help">${escapeHtml(roleDescription(roleKey))}</span></td>
+                    <td>${String(member.status || 'active') === 'active' ? '<span class="status accepted">Activo</span>' : '<span class="status rejected">Inactivo</span>'}</td>
+                    <td>
+                      ${isOwnerSuper ? '<span class="help">Protegido</span>' : `<button class="btn danger small" data-action="deactivate-team-member" data-id="${escapeHtml(member.id)}">Desactivar</button>`}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty">Todavía no hay usuarios definidos.</div>`}
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Mapa de roles</h2>
+      <div class="role-grid">
+        ${Object.entries(ROLE_DEFINITIONS).map(([key, role]) => `
+          <div class="role-card">
+            <strong>${escapeHtml(role.label)}</strong>
+            <p>${escapeHtml(role.description)}</p>
+          </div>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+async function saveTeamMember(form) {
+  if (!requirePermission('users_manage')) return;
+  const fd = new FormData(form);
+  const email = normalizeEmail(fd.get('email'));
+  const payload = {
+    company_id: state.company?.id || 'local-company',
+    email,
+    full_name: String(fd.get('full_name') || '').trim() || email,
+    role: normalizeRole(fd.get('role')),
+    status: ['active','inactive'].includes(String(fd.get('status') || 'active')) ? String(fd.get('status') || 'active') : 'active',
+    updated_at: new Date().toISOString()
+  };
+  if (!payload.email) {
+    toast('El correo es obligatorio.');
+    return;
+  }
+  if (payload.email === normalizeEmail(state.session?.email) && isCompanyOwner()) {
+    payload.role = 'superuser';
+    payload.status = 'active';
+    payload.user_id = state.session.id;
+  }
+
+  if (mode === 'supabase') {
+    const remotePayload = { ...payload, created_by_user_id: state.session?.id || null };
+    if (payload.email === normalizeEmail(state.session?.email)) remotePayload.user_id = state.session.id;
+    const { error } = await supabaseClient
+      .from('company_members')
+      .upsert(remotePayload, { onConflict: 'company_id,email' });
+    if (error) throw error;
+    await loadTeamMembers();
+  } else {
+    const existing = (state.teamMembers || []).find(member => normalizeEmail(member.email) === payload.email);
+    if (existing) Object.assign(existing, payload);
+    else state.teamMembers.push({ ...payload, id: uid('member'), created_at: new Date().toISOString() });
+    state.currentMember = state.teamMembers.find(member => normalizeEmail(member.email) === normalizeEmail(state.session?.email)) || state.currentMember;
+    saveLocalState();
+  }
+  form.reset();
+  toast('Usuario y rol guardados.');
+  setRoute('team');
+  render();
+}
+
+async function deactivateTeamMember(id) {
+  if (!requirePermission('users_manage')) return;
+  const member = (state.teamMembers || []).find(item => String(item.id) === String(id));
+  if (!member) return;
+  if (normalizeEmail(member.email) === normalizeEmail(state.session?.email) && isCompanyOwner()) {
+    toast('No puedes desactivar el superusuario propietario.');
+    return;
+  }
+  if (!confirm('¿Desactivar este usuario?')) return;
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient
+      .from('company_members')
+      .update({ status: 'inactive', updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+    await loadTeamMembers();
+  } else {
+    state.teamMembers = state.teamMembers.map(item => String(item.id) === String(id) ? { ...item, status: 'inactive', updated_at: new Date().toISOString() } : item);
+    saveLocalState();
+  }
+  toast('Usuario desactivado.');
+  setRoute('team');
+  render();
+}
+
 function renderIntegrations() {
   return `
     <div class="page-header">
@@ -2943,7 +3412,7 @@ function renderIntegrations() {
       <div class="card">
         <h2>Base de datos</h2>
         <p><strong>Estado:</strong> ${mode === 'supabase' ? 'Supabase conectado' : 'modo local'}</p>
-        <p class="help">Ejecuta los SQL de Supabase cuando quieras persistencia real para módulos nuevos. Para control ganadero usa <code>supabase/schema_phase8_dairy.sql</code>.</p>
+        <p class="help">Ejecuta los SQL de Supabase cuando quieras persistencia real para módulos nuevos. Para control ganadero y roles usa <code>supabase/schema_phase8b_dairy_crm_settings.sql</code> y luego <code>supabase/schema_phase8d_roles_catalog.sql</code>.</p>
       </div>
       <div class="card">
         <h2>Backend seguro</h2>
@@ -3165,6 +3634,7 @@ async function logout() {
 }
 
 async function saveCompany(form) {
+  if (!requirePermission('settings_company')) return;
   const fd = new FormData(form);
   const themePreference = ['white','black'].includes(String(fd.get('theme_preference') || 'white')) ? String(fd.get('theme_preference') || 'white') : 'white';
   setPreference('theme', themePreference, false);
@@ -3230,6 +3700,7 @@ async function saveCompany(form) {
 }
 
 async function saveClient(form) {
+  if (!requirePermission('clients_write')) return;
   const fd = new FormData(form);
   const payload = {
     company_id: state.company.id,
@@ -3257,6 +3728,7 @@ async function saveClient(form) {
 }
 
 async function deleteClient(id) {
+  if (!requirePermission('clients_delete')) return;
   const hasQuotes = state.quotes.some(q => q.client_id === id);
   if (hasQuotes) {
     toast('No puedes borrar un cliente con cotizaciones asociadas.');
@@ -3299,6 +3771,7 @@ function collectQuoteForm(form) {
 }
 
 async function saveQuote(form) {
+  if (!requirePermission('quotes_write')) return;
   const quote = collectQuoteForm(form);
   const existingQuote = quote.id ? state.quotes.find(q => q.id === quote.id) : null;
   if (!quote.items.length) {
@@ -3386,6 +3859,7 @@ async function saveQuote(form) {
 }
 
 async function deleteQuote(id) {
+  if (!requirePermission('quotes_delete')) return;
   if (!confirm('¿Borrar esta cotización?')) return;
   if (mode === 'supabase') {
     const { error } = await supabaseClient.from('quotes').delete().eq('id', id);
@@ -3609,6 +4083,7 @@ function addCatalogItemToQuote() {
 }
 
 async function saveProductService(form) {
+  if (!requirePermission('catalog_write')) return;
   const usage = getPlanUsage();
   const limit = Number(usage.plan.catalogLimit || 0);
   if (activeProductsServices().length >= limit) {
@@ -3648,6 +4123,7 @@ async function saveProductService(form) {
 }
 
 async function deleteProductService(id) {
+  if (!requirePermission('catalog_delete')) return;
   if (!confirm('¿Desactivar este producto o servicio del catálogo?')) return;
   if (mode === 'supabase') {
     const { error } = await supabaseClient.from('products_services').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', id);
@@ -3663,48 +4139,43 @@ async function deleteProductService(id) {
 }
 
 async function seedCatalogForBusinessType() {
+  if (!requirePermission('catalog_write')) return;
   const businessType = state.company?.business_type || 'general';
+  const seeds = getDefaultCatalogSeeds(businessType);
+  if (!seeds.length) {
+    toast('No hay plantilla de catálogo para este tipo de negocio todavía.');
+    return;
+  }
+
+  const existingNames = new Set(activeProductsServices().map(p => normalizeTextKey([p.category, p.name].filter(Boolean).join('|'))));
+  const missing = seeds
+    .map(catalogSeedToProduct)
+    .filter(item => item.name && !existingNames.has(normalizeTextKey([item.category, item.name].filter(Boolean).join('|'))));
+
+  if (!missing.length) {
+    toast('La plantilla ya estaba cargada.');
+    setRoute('catalog');
+    render();
+    return;
+  }
+
   if (mode === 'supabase') {
-    const { error } = await supabaseClient.rpc('seed_catalog_for_business_type', {
-      target_company_id: state.company.id,
-      selected_business_type: businessType
-    });
+    const { error } = await supabaseClient.from('products_services').insert(missing);
     if (error) throw error;
     await loadRemoteData();
   } else {
-    const dairySeeds = businessType === 'asociacion_ganaderos' ? [
-      { business_type: 'asociacion_ganaderos', name: 'Recepción de leche fresca', description: 'Registro de litros recibidos por productor', category: 'Leche', unit: 'litro', unit_price: 0 },
-      { business_type: 'asociacion_ganaderos', name: 'Transporte de leche', description: 'Servicio de ruta o acarreo de leche', category: 'Logística', unit: 'servicio', unit_price: 0 },
-      { business_type: 'asociacion_ganaderos', name: 'Análisis de calidad', description: 'Control básico de calidad de leche', category: 'Calidad', unit: 'servicio', unit_price: 0 }
-    ] : [];
-    const seeds = [...(state.businessTemplates || []), ...dairySeeds].filter(t => t.business_type === businessType || t.business_type === 'general');
-    seeds.forEach(t => {
-      if (!state.productsServices.some(p => p.name === t.name)) {
-        state.productsServices.unshift({
-          id: uid('prod'),
-          company_id: state.company.id || 'local-company',
-          name: t.name,
-          description: t.description || '',
-          category: t.category || '',
-          unit: t.unit || 'servicio',
-          default_quantity: 1,
-          unit_price: Number(t.unit_price || 0),
-          cost: 0,
-          tax_rate: Number(state.company?.tax_rate || 0),
-          is_active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-      }
+    missing.forEach(item => {
+      state.productsServices.unshift({ ...item, id: uid('prod'), created_at: new Date().toISOString() });
     });
     saveLocalState();
     render();
   }
   setRoute('catalog');
-  toast('Catálogo base cargado.');
+  toast(`Catálogo base cargado: ${missing.length} item${missing.length === 1 ? '' : 's'}.`);
 }
 
 async function saveMessageTemplate(form) {
+  if (!requirePermission('templates_write')) return;
   const fd = new FormData(form);
   const payload = {
     company_id: state.company.id,
@@ -3736,6 +4207,7 @@ async function saveMessageTemplate(form) {
 }
 
 async function deleteMessageTemplate(id) {
+  if (!requirePermission('templates_delete')) return;
   if (!confirm('¿Desactivar esta plantilla?')) return;
   if (mode === 'supabase') {
     const { error } = await supabaseClient.from('message_templates').update({ status: 'inactive', updated_at: new Date().toISOString() }).eq('id', id);
@@ -3869,6 +4341,7 @@ function generatePdf(id) {
 }
 
 async function startCheckout(planKey) {
+  if (!requirePermission('billing_manage')) return;
   if (planKey === 'custom') {
     const subject = encodeURIComponent('CotizaFlow - plan a cotizar');
     const body = encodeURIComponent(`Hola, deseo cotizar un plan para ${state.company?.name || 'mi empresa'}. Necesito más de 500 cotizaciones o condiciones especiales.`);
@@ -3892,6 +4365,7 @@ async function startCheckout(planKey) {
 }
 
 async function saveAffiliate(form) {
+  if (!requirePermission('affiliates_manage')) return;
   if (mode !== 'supabase') {
     toast('Los referidos reales requieren Supabase.');
     return;
@@ -4027,6 +4501,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'delete-product-service') await deleteProductService(id);
     if (action === 'seed-catalog') await seedCatalogForBusinessType();
     if (action === 'delete-message-template') await deleteMessageTemplate(id);
+    if (action === 'deactivate-team-member') await deactivateTeamMember(id);
     if (action === 'clear-logo') clearCompanyLogo();
     if (action === 'delete-milk-record') await deleteMilkRecord(id);
     if (action === 'milk-pdf') generateMilkPdf();
@@ -4050,6 +4525,7 @@ app.addEventListener('submit', async (event) => {
     if (type === 'affiliate') await saveAffiliate(form);
     if (type === 'product-service') await saveProductService(form);
     if (type === 'message-template') await saveMessageTemplate(form);
+    if (type === 'team-member') await saveTeamMember(form);
     if (type === 'milk-delivery') await saveMilkDelivery(form);
     if (type === 'milk-filters') handleMilkFilters(form);
     if (type === 'report-filters') handleReportFilters(form);
