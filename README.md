@@ -37,3 +37,17 @@ supabase functions deploy get-public-quote
 - `public.html`
 - `supabase/schema_phase7.sql`
 - `supabase/functions/get-public-quote/index.ts`
+
+## Fase 8 - Idiomas, temas y control ganadero
+
+Cambios incluidos:
+- Selector de idioma en la parte superior: Español / Inglés.
+- Tema visual en Configuración > Empresa: White / Black.
+- Navegación interna en Configuración para Empresa, Planes y pagos, Referidos e Integraciones.
+- Nuevo tipo de negocio: Asociación Ganaderos.
+- Nuevo módulo Control leche para registrar litros diarios por productor, comisión, neto a pagar, resumen mensual, PDF mensual y CSV.
+
+Persistencia del control de leche:
+- Si existe la tabla `milk_deliveries`, el módulo guarda en Supabase.
+- Si la tabla no existe, el módulo funciona en localStorage para no romper la app.
+- Para activar persistencia real, ejecuta `supabase/schema_phase8_dairy.sql` en Supabase SQL Editor.

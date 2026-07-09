@@ -329,3 +329,140 @@ button:disabled, input:disabled { opacity: .6; cursor: not-allowed; }
 }
 .link-button { border: 0; background: transparent; color: #334155; font-weight: 800; padding: 10px 4px; cursor: pointer; }
 .footer-links .link-button { color: var(--primary-dark); font-weight: 900; text-decoration: none; }
+
+/* Phase 8: language switcher, themes and dairy module */
+.utility-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(15,23,42,.04);
+}
+.utility-title { font-weight: 900; color: var(--text); }
+.utility-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.language-control { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 800; font-size: 13px; }
+.language-control select {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 12px;
+  outline: none;
+}
+.marketing-language { margin: 0 4px; }
+.config-nav-grid { margin-bottom: 0; }
+.dairy-onboarding {
+  border-color: rgba(15,118,110,.22);
+  background: linear-gradient(135deg, rgba(15,118,110,.08), var(--panel));
+}
+.dairy-metrics .metric strong { font-size: 28px; }
+.dairy-summary-list { display: grid; gap: 10px; }
+.dairy-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dairy-summary-row:last-child { border-bottom: 0; }
+.dairy-summary-row span { color: var(--muted); font-weight: 800; }
+
+html[data-theme="black"] {
+  --bg: #020617;
+  --panel: #0f172a;
+  --panel-2: #111c33;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --border: #243244;
+  --primary: #2dd4bf;
+  --primary-dark: #14b8a6;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --ok: #22c55e;
+  --shadow: 0 18px 44px rgba(0,0,0,.42);
+}
+html[data-theme="black"] body { background: var(--bg); color: var(--text); }
+html[data-theme="black"] .landing {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(45, 212, 191, 0.16), transparent 30%),
+    radial-gradient(circle at 88% 10%, rgba(59, 130, 246, 0.16), transparent 25%),
+    var(--bg);
+}
+html[data-theme="black"] .sidebar { background: #020617; border-right: 1px solid var(--border); }
+html[data-theme="black"] .sidebar .brand-mark { background: var(--primary); color: #022c22; }
+html[data-theme="black"] .card,
+html[data-theme="black"] .login-box,
+html[data-theme="black"] .loading-card,
+html[data-theme="black"] .preview-card,
+html[data-theme="black"] .quote-preview,
+html[data-theme="black"] .quote-doc-card,
+html[data-theme="black"] .mini-dashboard-card,
+html[data-theme="black"] .empty,
+html[data-theme="black"] .utility-bar {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border);
+  box-shadow: var(--shadow);
+}
+html[data-theme="black"] table,
+html[data-theme="black"] .field input,
+html[data-theme="black"] .field textarea,
+html[data-theme="black"] .field select,
+html[data-theme="black"] .copy-line input,
+html[data-theme="black"] .auth-tab,
+html[data-theme="black"] .language-control select {
+  background: #0b1220;
+  color: var(--text);
+  border-color: var(--border);
+}
+html[data-theme="black"] th { background: #111c33; color: #cbd5e1; }
+html[data-theme="black"] td,
+html[data-theme="black"] th,
+html[data-theme="black"] .quote-line,
+html[data-theme="black"] .quote-preview-header,
+html[data-theme="black"] .summary-line.total,
+html[data-theme="black"] .sidebar-footer,
+html[data-theme="black"] .dairy-summary-row { border-color: var(--border); }
+html[data-theme="black"] .btn.secondary { background: #1e293b; color: var(--text); border: 1px solid var(--border); }
+html[data-theme="black"] .btn.ghost { color: var(--text); border-color: var(--border); }
+html[data-theme="black"] .btn.primary { background: var(--primary-dark); color: #042f2e; }
+html[data-theme="black"] .btn.primary:hover { background: var(--primary); }
+html[data-theme="black"] .eyebrow { background: rgba(45,212,191,.10); color: #5eead4; border-color: rgba(45,212,191,.20); }
+html[data-theme="black"] .hero p,
+html[data-theme="black"] .metric span,
+html[data-theme="black"] .help,
+html[data-theme="black"] .quote-preview .num,
+html[data-theme="black"] .page-header p { color: var(--muted); }
+html[data-theme="black"] .bullets,
+html[data-theme="black"] .summary-line,
+html[data-theme="black"] .pipeline-row span,
+html[data-theme="black"] .insight-row span,
+html[data-theme="black"] .field label { color: #cbd5e1; }
+html[data-theme="black"] .badge.draft { background: #1f2937; color: #e5e7eb; border-color: #374151; }
+html[data-theme="black"] .badge.sent { background: rgba(37,99,235,.20); color: #93c5fd; border-color: rgba(147,197,253,.25); }
+html[data-theme="black"] .badge.accepted { background: rgba(22,101,52,.25); color: #86efac; border-color: rgba(134,239,172,.25); }
+html[data-theme="black"] .badge.rejected { background: rgba(153,27,27,.25); color: #fca5a5; border-color: rgba(252,165,165,.25); }
+html[data-theme="black"] .badge.expired { background: rgba(154,52,18,.25); color: #fdba74; border-color: rgba(253,186,116,.25); }
+html[data-theme="black"] .notice,
+html[data-theme="black"] .insight.info { background: rgba(30,64,175,.16); border-color: rgba(147,197,253,.22); color: #dbeafe; }
+html[data-theme="black"] .notice.warning,
+html[data-theme="black"] .insight.warning,
+html[data-theme="black"] .row-warning td { background: rgba(146,64,14,.22); border-color: rgba(251,191,36,.24); color: #ffedd5; }
+html[data-theme="black"] .insight.ok { background: rgba(22,101,52,.22); border-color: rgba(134,239,172,.24); }
+html[data-theme="black"] .pipeline-bar { background: #1e293b; }
+html[data-theme="black"] .pipeline-bar i { background: var(--primary); }
+html[data-theme="black"] .config-card.active { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(45,212,191,.10); }
+html[data-theme="black"] .dairy-onboarding { background: linear-gradient(135deg, rgba(45,212,191,.10), var(--panel)); }
+
+@media (max-width: 900px) {
+  .utility-bar { flex-direction: column; align-items: stretch; }
+  .utility-actions { justify-content: flex-start; }
+  .language-control { width: 100%; justify-content: space-between; }
+  .language-control select { flex: 1; }
+}

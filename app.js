@@ -3,6 +3,8 @@ const config = window.COTIZAFLOW_CONFIG || {};
 const app = document.getElementById('app');
 const REFERRAL_STORAGE_KEY = 'cotizaflow_pending_referral_code_v1';
 const QUOTE_DRAFT_STORAGE_KEY = 'cotizaflow_quote_form_draft_v1';
+const PREFERENCES_STORAGE_KEY = 'cotizaflow_preferences_v1';
+const MILK_RECORDS_STORAGE_KEY = 'cotizaflow_milk_records_v1';
 
 const PLAN_CATALOG = {
   free: { name: 'Free', price: 0, quoteLimit: 5, users: 1, catalogLimit: 10, description: 'Prueba limitada para validar el producto.' },
@@ -31,6 +33,10 @@ let state = {
   messageTemplates: [],
   productsServices: [],
   businessTemplates: [],
+  milkRecords: [],
+  milkStorageMode: 'local',
+  milkFilters: { month: currentMonthValue() },
+  preferences: loadPreferences(),
   pendingReferralCode: captureReferralCode(),
   reportFilters: { period: 'all', status: 'all', attention: 'all' },
   clientFilters: { status: 'all', search: '' },
@@ -53,7 +59,8 @@ const defaultCompany = {
   default_quote_notes: 'Gracias por considerar nuestra propuesta. Esta cotización está sujeta a disponibilidad y vigencia indicada.',
   default_terms: '',
   default_whatsapp_template: '',
-  logo_position: 'right'
+  logo_position: 'right',
+  theme_preference: 'white'
 };
 
 const localDefaultState = {
@@ -71,6 +78,10 @@ const localDefaultState = {
   messageTemplates: [],
   productsServices: [],
   businessTemplates: [],
+  milkRecords: [],
+  milkStorageMode: 'local',
+  milkFilters: { month: currentMonthValue() },
+  preferences: loadPreferences(),
   reportFilters: { period: 'all', status: 'all', attention: 'all' },
   clientFilters: { status: 'all', search: '' }
 };
@@ -92,10 +103,160 @@ function captureReferralCode() {
   }
 }
 
+
+const TRANSLATIONS = {
+  es: {
+    language: 'Idioma', spanish: 'Español', english: 'Inglés', dashboard: 'Dashboard', quotes: 'Cotizaciones',
+    newQuote: 'Nueva cotización', followup: 'Seguimiento', clients: 'CRM clientes', catalog: 'Catálogo', templates: 'Plantillas',
+    settings: 'Configuración', milkControl: 'Control leche', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones',
+    back: 'Regresar', theme: 'Temas', white: 'White', black: 'Black', saveSettings: 'Guardar configuración'
+  },
+  en: {
+    language: 'Language', spanish: 'Spanish', english: 'English', dashboard: 'Dashboard', quotes: 'Quotes',
+    newQuote: 'New quote', followup: 'Follow-up', clients: 'Client CRM', catalog: 'Catalog', templates: 'Templates',
+    settings: 'Settings', milkControl: 'Milk control', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations',
+    back: 'Back', theme: 'Themes', white: 'White', black: 'Black', saveSettings: 'Save settings'
+  }
+};
+
+function loadPreferences() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PREFERENCES_STORAGE_KEY) || '{}');
+    const language = ['es', 'en'].includes(parsed.language) ? parsed.language : 'es';
+    const theme = ['white', 'black'].includes(parsed.theme) ? parsed.theme : 'white';
+    return { language, theme };
+  } catch (_error) {
+    return { language: 'es', theme: 'white' };
+  }
+}
+
+function savePreferences() {
+  localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(state.preferences || { language: 'es', theme: 'white' }));
+}
+
+function setPreference(key, value, shouldRender = true) {
+  if (!state.preferences) state.preferences = loadPreferences();
+  if (key === 'language' && !['es', 'en'].includes(value)) return;
+  if (key === 'theme' && !['white', 'black'].includes(value)) return;
+  state.preferences[key] = value;
+  savePreferences();
+  applyPreferences();
+  if (shouldRender) render();
+}
+
+function applyPreferences() {
+  const prefs = state.preferences || loadPreferences();
+  document.documentElement.lang = prefs.language || 'es';
+  document.documentElement.dataset.theme = prefs.theme || 'white';
+  document.body.dataset.theme = prefs.theme || 'white';
+}
+
+function t(key) {
+  const lang = state.preferences?.language || 'es';
+  return TRANSLATIONS[lang]?.[key] || TRANSLATIONS.es[key] || key;
+}
+
+function renderLanguageSelector(extraClass = '') {
+  const lang = state.preferences?.language || 'es';
+  return `
+    <label class="language-control ${extraClass}">
+      <span>${escapeHtml(t('language'))}</span>
+      <select data-language-select aria-label="${escapeHtml(t('language'))}">
+        <option value="es" ${lang === 'es' ? 'selected' : ''}>${escapeHtml(t('spanish'))}</option>
+        <option value="en" ${lang === 'en' ? 'selected' : ''}>${escapeHtml(t('english'))}</option>
+      </select>
+    </label>
+  `;
+}
+
+function renderUtilityBar() {
+  return `
+    <div class="utility-bar">
+      <div class="utility-title">${escapeHtml(state.company?.name || 'CotizaFlow')}</div>
+      <div class="utility-actions">${renderLanguageSelector()}</div>
+    </div>
+  `;
+}
+
+function currentMonthValue(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function numberFmt(value, decimals = 2) {
+  return new Intl.NumberFormat('es-DO', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(Number(value || 0));
+}
+
+function milkFallbackKey() {
+  const userId = state.session?.id || 'local-user';
+  const companyId = state.company?.id || 'local-company';
+  return `${MILK_RECORDS_STORAGE_KEY}:${userId}:${companyId}`;
+}
+
+function loadMilkRecordsLocalFallback() {
+  try {
+    const raw = localStorage.getItem(milkFallbackKey());
+    return raw ? JSON.parse(raw).map(normalizeMilkRecord) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function saveMilkRecordsLocalFallback() {
+  try {
+    localStorage.setItem(milkFallbackKey(), JSON.stringify(state.milkRecords || []));
+  } catch (error) {
+    console.warn('No se pudo guardar el control de leche local:', error);
+  }
+}
+
+function normalizeMilkRecord(record = {}) {
+  const liters = Number(record.liters || 0);
+  const price = Number(record.price_per_liter || record.price || 0);
+  const commissionRate = Number(record.commission_rate || 0);
+  const gross = liters * price;
+  const commission = gross * (commissionRate / 100);
+  return {
+    id: record.id || uid('milk'),
+    company_id: record.company_id || state.company?.id || 'local-company',
+    producer_name: String(record.producer_name || record.producer || '').trim(),
+    delivery_date: String(record.delivery_date || record.date || todayISO()).slice(0, 10),
+    liters,
+    price_per_liter: price,
+    commission_rate: commissionRate,
+    notes: String(record.notes || '').trim(),
+    created_at: record.created_at || new Date().toISOString(),
+    updated_at: record.updated_at || record.created_at || new Date().toISOString(),
+    gross_amount: gross,
+    commission_amount: commission,
+    net_amount: gross - commission
+  };
+}
+
+async function loadMilkRecords() {
+  state.milkStorageMode = 'local';
+  state.milkRecords = mode === 'local' ? (state.milkRecords || []).map(normalizeMilkRecord) : loadMilkRecordsLocalFallback();
+  if (mode !== 'supabase' || !supabaseClient || !state.company?.id) return;
+
+  try {
+    const { data, error } = await supabaseClient
+      .from('milk_deliveries')
+      .select('*')
+      .eq('company_id', state.company.id)
+      .order('delivery_date', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    state.milkRecords = (data || []).map(normalizeMilkRecord);
+    state.milkStorageMode = 'supabase';
+  } catch (error) {
+    console.warn('Control de leche en modo local. Crea la tabla milk_deliveries para persistencia Supabase:', error.message || error);
+  }
+}
+
 function getPendingReferralCode() {
   return sanitizeReferralCode(state.pendingReferralCode || localStorage.getItem(REFERRAL_STORAGE_KEY) || '');
 }
 
+applyPreferences();
 init();
 
 async function init() {
@@ -180,6 +341,9 @@ function loadLocalState() {
       messageTemplates: parsed.messageTemplates || [],
       productsServices: parsed.productsServices || [],
       businessTemplates: parsed.businessTemplates || [],
+      milkRecords: (parsed.milkRecords || []).map(normalizeMilkRecord),
+      milkStorageMode: 'local',
+      milkFilters: parsed.milkFilters || { month: currentMonthValue() },
       reportFilters: parsed.reportFilters || { period: 'all', status: 'all', attention: 'all' },
       clientFilters: parsed.clientFilters || { status: 'all', search: '' }
     };
@@ -206,6 +370,8 @@ function saveLocalState() {
     messageTemplates: state.messageTemplates,
     productsServices: state.productsServices,
     businessTemplates: state.businessTemplates,
+    milkRecords: state.milkRecords,
+    milkFilters: state.milkFilters,
     reportFilters: state.reportFilters,
     clientFilters: state.clientFilters
   };
@@ -376,6 +542,8 @@ async function loadRemoteData() {
           total: Number(item.total || 0)
         }))
     }));
+
+    await loadMilkRecords();
   } catch (error) {
     console.error(error);
     state.authMessage = error.message || 'No se pudo cargar Supabase.';
@@ -667,6 +835,7 @@ function nextQuoteNumber() {
 }
 
 function render() {
+  applyPreferences();
   if (state.loading) {
     app.innerHTML = `
       <main class="landing app-page">
@@ -697,6 +866,7 @@ function renderPublic(route) {
             <button class="link-button" data-scroll-target="use-cases">Casos de uso</button>
             <button class="link-button" data-scroll-target="plans">Planes</button>
             <button class="link-button" data-scroll-target="contact">Contacto</button>
+            ${renderLanguageSelector('marketing-language')}
             <button class="btn ghost" data-route="auth">Entrar</button>
             <button class="btn primary" data-route="auth">Crear cuenta</button>
           </div>
@@ -884,14 +1054,15 @@ function renderApp(route) {
       <aside class="sidebar">
         <div class="brand"><span class="brand-mark">C</span> CotizaFlow</div>
         <nav>
-          ${navLink('dashboard', 'Dashboard')}
-          ${navLink('quotes', 'Cotizaciones')}
-          ${navLink('quote-new', 'Nueva cotización')}
-          ${navLink('reports', 'Seguimiento')}
-          ${navLink('clients', 'CRM clientes')}
-          ${navLink('catalog', 'Catálogo')}
-          ${navLink('templates', 'Plantillas')}
-          ${navLink('settings', 'Configuración')}
+          ${navLink('dashboard', t('dashboard'))}
+          ${navLink('quotes', t('quotes'))}
+          ${navLink('quote-new', t('newQuote'))}
+          ${navLink('reports', t('followup'))}
+          ${navLink('clients', t('clients'))}
+          ${navLink('catalog', t('catalog'))}
+          ${navLink('templates', t('templates'))}
+          ${state.company?.business_type === 'asociacion_ganaderos' ? navLink('milk', t('milkControl')) : ''}
+          ${navLink('settings', t('settings'))}
         </nav>
         <div class="sidebar-footer">
           <strong>${escapeHtml(state.company?.name || 'Mi empresa')}</strong><br />
@@ -900,7 +1071,7 @@ function renderApp(route) {
           <button class="btn secondary small" data-action="logout" style="margin-top:12px;">Salir</button>
         </div>
       </aside>
-      <main class="main">${renderRoute(route)}</main>
+      <main class="main">${renderUtilityBar()}${renderRoute(route)}</main>
     </div>
   `;
 }
@@ -920,6 +1091,7 @@ function renderRoute(route) {
     case 'clients': return renderClients();
     case 'catalog': return renderCatalog();
     case 'templates': return renderTemplates();
+    case 'milk': return renderMilkControl();
     case 'settings': return renderSettings();
     case 'billing': return renderBilling();
     case 'affiliates': return renderAffiliates();
@@ -1630,7 +1802,8 @@ const BUSINESS_TYPES = [
   ['aires', 'Aires acondicionados'],
   ['imprenta', 'Imprenta'],
   ['carga', 'Agencia de carga'],
-  ['suplidor', 'Suplidor']
+  ['suplidor', 'Suplidor'],
+  ['asociacion_ganaderos', 'Asociación Ganaderos']
 ];
 
 function businessTypeLabel(value) {
@@ -1811,22 +1984,40 @@ function renderLogoPreview(c) {
   return `<div class="logo-preview"><img src="${escapeHtml(c.logo_data_url)}" alt="Logo empresa" /></div>`;
 }
 
+
+function renderConfigNav(active = 'settings') {
+  const cards = [
+    ['settings', t('company'), 'Datos fiscales, logo, temas y formato de cotización'],
+    ['billing', t('billing'), 'Suscripción, límites y checkout'],
+    ['affiliates', t('affiliates'), 'Código, comisiones y enlace'],
+    ['integrations', t('integrations'), 'Estado técnico y próximos conectores']
+  ];
+  return `
+    <section class="grid cols-4 config-grid config-nav-grid">
+      ${cards.map(([route, title, subtitle]) => `
+        <button class="card config-card ${active === route ? 'active' : ''}" data-route="${route}">
+          <strong>${escapeHtml(title)}</strong><span>${escapeHtml(subtitle)}</span>
+        </button>
+      `).join('')}
+    </section>
+  `;
+}
+
 function renderSettings() {
   const c = state.company || defaultCompany;
+  const theme = state.preferences?.theme || c.theme_preference || 'white';
   return `
     <div class="page-header">
       <div>
         <h1>Configuración</h1>
         <p>Administra empresa, planes y pagos, referidos e integraciones desde un solo lugar.</p>
       </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-route="dashboard">${escapeHtml(t('back'))}</button>
+      </div>
     </div>
 
-    <section class="grid cols-4 config-grid">
-      <button class="card config-card active" data-route="settings"><strong>Empresa</strong><span>Datos fiscales, logo, formato de cotización</span></button>
-      <button class="card config-card" data-route="billing"><strong>Planes y pagos</strong><span>Suscripción, límites y checkout</span></button>
-      <button class="card config-card" data-route="affiliates"><strong>Referidos</strong><span>Código, comisiones y enlace</span></button>
-      <button class="card config-card" data-route="integrations"><strong>Integraciones</strong><span>Estado técnico y próximos conectores</span></button>
-    </section>
+    ${renderConfigNav('settings')}
 
     <section class="card" style="margin-top:18px;">
       <h2>Empresa</h2>
@@ -1845,6 +2036,13 @@ function renderSettings() {
           <select name="business_type">
             ${businessTypeOptions(c.business_type)}
           </select>
+        </div>
+        <div class="field"><label>${escapeHtml(t('theme'))}</label>
+          <select name="theme_preference" data-theme-select>
+            <option value="white" ${theme === 'white' ? 'selected' : ''}>White</option>
+            <option value="black" ${theme === 'black' ? 'selected' : ''}>Black</option>
+          </select>
+          <p class="help">El tema Black cambia la paleta completa para trabajar con fondo oscuro.</p>
         </div>
         <div class="field"><label>Posición del logo en cotización</label>
           <select name="logo_position">
@@ -1866,9 +2064,17 @@ function renderSettings() {
         <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en cotizaciones</label><textarea name="default_quote_notes">${escapeHtml(c.default_quote_notes || defaultCompany.default_quote_notes)}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Términos y condiciones por defecto</label><textarea name="default_terms" placeholder="Opcional">${escapeHtml(c.default_terms || '')}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Mensaje WhatsApp por defecto</label><textarea name="default_whatsapp_template" placeholder="Usa variables: {{client_name}}, {{quote_number}}, {{quote_total}}, {{public_link}}, {{company_name}}">${escapeHtml(c.default_whatsapp_template || '')}</textarea></div>
-        <button class="btn primary" type="submit">Guardar configuración</button>
+        <button class="btn primary" type="submit">${escapeHtml(t('saveSettings'))}</button>
       </form>
     </section>
+
+    ${c.business_type === 'asociacion_ganaderos' ? `
+      <section class="card dairy-onboarding" style="margin-top:18px;">
+        <h2>Control diario de leche activo</h2>
+        <p>Al seleccionar Asociación Ganaderos se habilita el módulo para registrar litros recibidos, comisión y pagos mensuales por productor.</p>
+        <button class="btn primary" data-route="milk">Abrir control de leche</button>
+      </section>
+    ` : ''}
   `;
 }
 
@@ -2136,20 +2342,351 @@ function renderMessageLogs(logs) {
   `;
 }
 
+
+function getMilkRecordsForMonth(month) {
+  const selected = month || state.milkFilters?.month || currentMonthValue();
+  return (state.milkRecords || [])
+    .map(normalizeMilkRecord)
+    .filter(record => String(record.delivery_date || '').startsWith(selected))
+    .sort((a, b) => String(b.delivery_date || '').localeCompare(String(a.delivery_date || '')) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+}
+
+function summarizeMilkByProducer(records) {
+  const grouped = new Map();
+  records.forEach(record => {
+    const key = record.producer_name || 'Sin productor';
+    if (!grouped.has(key)) grouped.set(key, { producer_name: key, days: new Set(), records: 0, liters: 0, gross: 0, commission: 0, net: 0 });
+    const row = grouped.get(key);
+    row.records += 1;
+    row.days.add(record.delivery_date);
+    row.liters += Number(record.liters || 0);
+    row.gross += Number(record.gross_amount || 0);
+    row.commission += Number(record.commission_amount || 0);
+    row.net += Number(record.net_amount || 0);
+  });
+  return [...grouped.values()]
+    .map(row => ({ ...row, days: row.days.size }))
+    .sort((a, b) => b.net - a.net);
+}
+
+function renderMilkControl() {
+  const month = state.milkFilters?.month || currentMonthValue();
+  const records = getMilkRecordsForMonth(month);
+  const summary = summarizeMilkByProducer(records);
+  const totals = summary.reduce((acc, row) => {
+    acc.liters += row.liters;
+    acc.gross += row.gross;
+    acc.commission += row.commission;
+    acc.net += row.net;
+    return acc;
+  }, { liters: 0, gross: 0, commission: 0, net: 0 });
+  const producerOptions = [...new Set([...(state.clients || []).map(c => c.name).filter(Boolean), ...(state.milkRecords || []).map(r => r.producer_name).filter(Boolean)])]
+    .sort((a, b) => a.localeCompare(b));
+
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Control diario de leche</h1>
+        <p>Registra la llegada diaria por productor, calcula comisión y genera el cierre mensual imprimible.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-action="milk-csv">Exportar CSV</button>
+        <button class="btn primary" data-action="milk-pdf">PDF mensual</button>
+      </div>
+    </div>
+
+    ${state.company?.business_type !== 'asociacion_ganaderos' ? `
+      <div class="notice warning">
+        Este módulo está pensado para <strong>Asociación Ganaderos</strong>. Puedes usarlo ahora, pero se recomienda seleccionar ese tipo de negocio en Configuración &gt; Empresa.
+      </div>
+    ` : ''}
+
+    <section class="grid cols-4 dairy-metrics">
+      <div class="card metric"><span>Litros del mes</span><strong>${numberFmt(totals.liters, 2)}</strong></div>
+      <div class="card metric"><span>Monto bruto</span><strong>${money(totals.gross)}</strong></div>
+      <div class="card metric"><span>Comisión</span><strong>${money(totals.commission)}</strong></div>
+      <div class="card metric"><span>Neto a pagar</span><strong>${money(totals.net)}</strong></div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px; align-items:start;">
+      <div class="card">
+        <h2>Nuevo registro</h2>
+        <form data-form="milk-delivery" class="form-grid two">
+          <div class="field"><label>Fecha</label><input name="delivery_date" type="date" value="${todayISO()}" required /></div>
+          <div class="field"><label>Productor / ganadero</label>
+            <input name="producer_name" list="milk-producers" placeholder="José Pérez" required />
+            <datalist id="milk-producers">
+              ${producerOptions.map(name => `<option value="${escapeHtml(name)}"></option>`).join('')}
+            </datalist>
+          </div>
+          <div class="field"><label>Litros recibidos</label><input name="liters" type="number" step="0.01" min="0" placeholder="20" required /></div>
+          <div class="field"><label>Precio por litro</label><input name="price_per_liter" type="number" step="0.01" min="0" placeholder="0.00" required /></div>
+          <div class="field"><label>% comisión asociación</label><input name="commission_rate" type="number" step="0.01" min="0" max="100" placeholder="0" required /></div>
+          <div class="field"><label>Nota</label><input name="notes" placeholder="Opcional: calidad, ruta, observación" /></div>
+          <button class="btn primary" type="submit">Registrar llegada</button>
+        </form>
+        <p class="help" style="margin-top:12px;">Cálculo usado: litros × precio por litro = monto bruto. Comisión = monto bruto × %. Neto a pagar = bruto - comisión.</p>
+        <p class="help">Almacenamiento actual: ${state.milkStorageMode === 'supabase' ? 'Supabase' : 'local del navegador'}.</p>
+      </div>
+
+      <div class="card">
+        <h2>Cierre mensual</h2>
+        <form data-form="milk-filters" class="form-grid two">
+          <div class="field"><label>Mes</label><input name="month" type="month" value="${escapeHtml(month)}" /></div>
+          <button class="btn secondary" type="submit">Ver mes</button>
+        </form>
+        <div class="dairy-summary-list" style="margin-top:14px;">
+          ${summary.length ? summary.slice(0, 5).map(row => `
+            <div class="dairy-summary-row">
+              <strong>${escapeHtml(row.producer_name)}</strong>
+              <span>${numberFmt(row.liters, 2)} L · ${money(row.net)}</span>
+            </div>
+          `).join('') : `<div class="empty">No hay registros para este mes.</div>`}
+        </div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Glosario mensual de pago por productor</h2>
+      ${summary.length ? renderMilkSummaryTable(summary) : `<div class="empty">Agrega registros diarios para generar el resumen mensual.</div>`}
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Registros diarios</h2>
+      ${records.length ? renderMilkRecordsTable(records) : `<div class="empty">Todavía no hay llegadas registradas en este mes.</div>`}
+    </section>
+  `;
+}
+
+function renderMilkSummaryTable(summary) {
+  return `
+    <div class="table-wrap">
+      <table class="compact-table">
+        <thead><tr><th>Productor</th><th>Días</th><th>Registros</th><th>Litros</th><th>Bruto</th><th>Comisión</th><th>Neto a pagar</th></tr></thead>
+        <tbody>
+          ${summary.map(row => `
+            <tr>
+              <td><strong>${escapeHtml(row.producer_name)}</strong></td>
+              <td>${row.days}</td>
+              <td>${row.records}</td>
+              <td>${numberFmt(row.liters, 2)} L</td>
+              <td>${money(row.gross)}</td>
+              <td>${money(row.commission)}</td>
+              <td><strong>${money(row.net)}</strong></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderMilkRecordsTable(records) {
+  return `
+    <div class="table-wrap">
+      <table class="compact-table">
+        <thead><tr><th>Fecha</th><th>Productor</th><th>Litros</th><th>Precio/L</th><th>% Comisión</th><th>Neto</th><th>Nota</th><th></th></tr></thead>
+        <tbody>
+          ${records.map(record => `
+            <tr>
+              <td>${escapeHtml(record.delivery_date)}</td>
+              <td><strong>${escapeHtml(record.producer_name)}</strong></td>
+              <td>${numberFmt(record.liters, 2)} L</td>
+              <td>${money(record.price_per_liter)}</td>
+              <td>${numberFmt(record.commission_rate, 2)}%</td>
+              <td><strong>${money(record.net_amount)}</strong></td>
+              <td>${escapeHtml(record.notes || '')}</td>
+              <td><button class="btn danger small" data-action="delete-milk-record" data-id="${escapeHtml(record.id)}">Borrar</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function handleMilkFilters(form) {
+  const fd = new FormData(form);
+  state.milkFilters = { month: String(fd.get('month') || currentMonthValue()) };
+  saveLocalState();
+  setRoute('milk');
+  render();
+}
+
+async function saveMilkDelivery(form) {
+  const fd = new FormData(form);
+  const record = normalizeMilkRecord({
+    company_id: state.company?.id || 'local-company',
+    producer_name: String(fd.get('producer_name') || '').trim(),
+    delivery_date: String(fd.get('delivery_date') || todayISO()),
+    liters: Number(fd.get('liters') || 0),
+    price_per_liter: Number(fd.get('price_per_liter') || 0),
+    commission_rate: Number(fd.get('commission_rate') || 0),
+    notes: String(fd.get('notes') || '').trim()
+  });
+
+  if (!record.producer_name) {
+    toast('Indica el productor o ganadero.');
+    return;
+  }
+  if (record.liters <= 0) {
+    toast('Los litros deben ser mayores que cero.');
+    return;
+  }
+
+  if (mode === 'supabase' && supabaseClient && state.milkStorageMode === 'supabase') {
+    const payload = {
+      company_id: state.company.id,
+      producer_name: record.producer_name,
+      delivery_date: record.delivery_date,
+      liters: record.liters,
+      price_per_liter: record.price_per_liter,
+      commission_rate: record.commission_rate,
+      notes: record.notes
+    };
+    const { data, error } = await supabaseClient.from('milk_deliveries').insert(payload).select('*').single();
+    if (error) throw error;
+    state.milkRecords.unshift(normalizeMilkRecord(data));
+  } else {
+    state.milkRecords.unshift(record);
+    if (mode === 'local') saveLocalState();
+    else saveMilkRecordsLocalFallback();
+  }
+
+  state.milkFilters = { month: record.delivery_date.slice(0, 7) };
+  form.reset();
+  toast('Llegada de leche registrada.');
+  setRoute('milk');
+  render();
+}
+
+async function deleteMilkRecord(id) {
+  if (!confirm('¿Borrar este registro de leche?')) return;
+  if (mode === 'supabase' && supabaseClient && state.milkStorageMode === 'supabase') {
+    const { error } = await supabaseClient.from('milk_deliveries').delete().eq('id', id);
+    if (error) throw error;
+  }
+  state.milkRecords = (state.milkRecords || []).filter(record => record.id !== id);
+  if (mode === 'local') saveLocalState();
+  else saveMilkRecordsLocalFallback();
+  toast('Registro eliminado.');
+  render();
+}
+
+function generateMilkPdf() {
+  if (!window.jspdf?.jsPDF) {
+    toast('jsPDF no está disponible. Revisa tu conexión.');
+    return;
+  }
+  const month = state.milkFilters?.month || currentMonthValue();
+  const records = getMilkRecordsForMonth(month);
+  const summary = summarizeMilkByProducer(records);
+  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+  const left = 44;
+  let y = 48;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(17);
+  doc.text('Control mensual de leche', left, y);
+  y += 18;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`${state.company?.name || 'Asociación'} · Mes: ${month}`, left, y);
+  y += 28;
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Productor', left, y);
+  doc.text('Litros', 230, y);
+  doc.text('Bruto', 315, y);
+  doc.text('Comisión', 405, y);
+  doc.text('Neto a pagar', 500, y);
+  y += 8;
+  doc.line(left, y, 568, y);
+  y += 18;
+  doc.setFont('helvetica', 'normal');
+
+  summary.forEach(row => {
+    if (y > 720) { doc.addPage(); y = 48; }
+    doc.text(String(row.producer_name).slice(0, 28), left, y);
+    doc.text(numberFmt(row.liters, 2), 230, y);
+    doc.text(money(row.gross), 315, y);
+    doc.text(money(row.commission), 405, y);
+    doc.text(money(row.net), 500, y);
+    y += 18;
+  });
+
+  const totals = summary.reduce((acc, row) => {
+    acc.liters += row.liters;
+    acc.gross += row.gross;
+    acc.commission += row.commission;
+    acc.net += row.net;
+    return acc;
+  }, { liters: 0, gross: 0, commission: 0, net: 0 });
+
+  y += 10;
+  doc.line(left, y, 568, y);
+  y += 18;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Totales', left, y);
+  doc.text(numberFmt(totals.liters, 2), 230, y);
+  doc.text(money(totals.gross), 315, y);
+  doc.text(money(totals.commission), 405, y);
+  doc.text(money(totals.net), 500, y);
+
+  y += 32;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('Detalle: el neto a pagar se calcula como monto bruto menos comisión de la asociación.', left, y);
+  doc.save(`control-leche-${month}.pdf`);
+}
+
+function exportMilkCsv() {
+  const month = state.milkFilters?.month || currentMonthValue();
+  const records = getMilkRecordsForMonth(month);
+  if (!records.length) {
+    toast('No hay registros para exportar.');
+    return;
+  }
+  const headers = ['fecha', 'productor', 'litros', 'precio_por_litro', 'comision_pct', 'monto_bruto', 'comision', 'neto_a_pagar', 'nota'];
+  const lines = [headers.join(',')].concat(records.map(record => [
+    record.delivery_date,
+    record.producer_name,
+    record.liters,
+    record.price_per_liter,
+    record.commission_rate,
+    record.gross_amount,
+    record.commission_amount,
+    record.net_amount,
+    record.notes || ''
+  ].map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `control-leche-${month}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast('CSV generado.');
+}
+
 function renderIntegrations() {
   return `
     <div class="page-header">
       <div>
         <h1>Integraciones</h1>
-        <p>Estado técnico de Fase 5: pagos, referidos, links públicos, catálogo y plantillas.</p>
+        <p>Estado técnico de pagos, referidos, links públicos, catálogo, plantillas y control ganadero.</p>
       </div>
+      <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
     </div>
 
-    <section class="grid cols-2">
+    ${renderConfigNav('integrations')}
+
+    <section class="grid cols-2" style="margin-top:18px;">
       <div class="card">
         <h2>Base de datos</h2>
         <p><strong>Estado:</strong> ${mode === 'supabase' ? 'Supabase conectado' : 'modo local'}</p>
-        <p class="help">Ejecuta <code>supabase/schema_phase5.sql</code> después de Fase 4 para activar planes nuevos, catálogo y plantillas por tipo de negocio.</p>
+        <p class="help">Ejecuta los SQL de Supabase cuando quieras persistencia real para módulos nuevos. Para control ganadero usa <code>supabase/schema_phase8_dairy.sql</code>.</p>
       </div>
       <div class="card">
         <h2>Backend seguro</h2>
@@ -2173,9 +2710,12 @@ function renderBilling() {
         <h1>Planes y pagos</h1>
         <p>Control de suscripción, límites mensuales y checkout seguro.</p>
       </div>
+      <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
     </div>
 
-    ${renderUsageCard()}
+    ${renderConfigNav('billing')}
+
+    <div style="margin-top:18px;">${renderUsageCard()}</div>
 
     <section class="grid cols-3" style="margin-top:18px;">
       ${['starter','enterprise','custom'].map(planKey => renderPlanCard(planKey, usage.planKey, provider)).join('')}
@@ -2227,7 +2767,12 @@ function renderAffiliates() {
         <h1>Referidos</h1>
         <p>Programa de afiliados: 20% recurrente por 12 meses. Partners aprobados pueden llegar a 30%.</p>
       </div>
+      <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
     </div>
+
+    ${renderConfigNav('affiliates')}
+
+    <div style="margin-top:18px;"></div>
 
     ${affiliate ? `
       <section class="grid cols-3">
@@ -2364,6 +2909,8 @@ async function logout() {
 
 async function saveCompany(form) {
   const fd = new FormData(form);
+  const themePreference = ['white','black'].includes(String(fd.get('theme_preference') || 'white')) ? String(fd.get('theme_preference') || 'white') : 'white';
+  setPreference('theme', themePreference, false);
   const payload = {
     name: String(fd.get('name') || '').trim(),
     tax_id: String(fd.get('tax_id') || '').trim(),
@@ -2388,9 +2935,9 @@ async function saveCompany(form) {
       .select('*')
       .single();
     if (error) throw error;
-    state.company = normalizeCompany(data);
+    state.company = { ...normalizeCompany(data), theme_preference: themePreference };
   } else {
-    state.company = { ...state.company, ...payload };
+    state.company = { ...state.company, ...payload, theme_preference: themePreference };
     saveLocalState();
   }
   toast('Empresa guardada.');
@@ -2840,7 +3387,12 @@ async function seedCatalogForBusinessType() {
     if (error) throw error;
     await loadRemoteData();
   } else {
-    const seeds = (state.businessTemplates || []).filter(t => t.business_type === businessType || t.business_type === 'general');
+    const dairySeeds = businessType === 'asociacion_ganaderos' ? [
+      { business_type: 'asociacion_ganaderos', name: 'Recepción de leche fresca', description: 'Registro de litros recibidos por productor', category: 'Leche', unit: 'litro', unit_price: 0 },
+      { business_type: 'asociacion_ganaderos', name: 'Transporte de leche', description: 'Servicio de ruta o acarreo de leche', category: 'Logística', unit: 'servicio', unit_price: 0 },
+      { business_type: 'asociacion_ganaderos', name: 'Análisis de calidad', description: 'Control básico de calidad de leche', category: 'Calidad', unit: 'servicio', unit_price: 0 }
+    ] : [];
+    const seeds = [...(state.businessTemplates || []), ...dairySeeds].filter(t => t.business_type === businessType || t.business_type === 'general');
     seeds.forEach(t => {
       if (!state.productsServices.some(p => p.name === t.name)) {
         state.productsServices.unshift({
@@ -3189,6 +3741,9 @@ app.addEventListener('click', async (event) => {
     if (action === 'seed-catalog') await seedCatalogForBusinessType();
     if (action === 'delete-message-template') await deleteMessageTemplate(id);
     if (action === 'clear-logo') clearCompanyLogo();
+    if (action === 'delete-milk-record') await deleteMilkRecord(id);
+    if (action === 'milk-pdf') generateMilkPdf();
+    if (action === 'milk-csv') exportMilkCsv();
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
   } catch (error) {
     console.error(error);
@@ -3208,6 +3763,8 @@ app.addEventListener('submit', async (event) => {
     if (type === 'affiliate') await saveAffiliate(form);
     if (type === 'product-service') await saveProductService(form);
     if (type === 'message-template') await saveMessageTemplate(form);
+    if (type === 'milk-delivery') await saveMilkDelivery(form);
+    if (type === 'milk-filters') handleMilkFilters(form);
     if (type === 'report-filters') handleReportFilters(form);
     if (type === 'client-filters') handleClientFilters(form);
   } catch (error) {
@@ -3225,6 +3782,14 @@ app.addEventListener('input', (event) => {
 });
 
 app.addEventListener('change', (event) => {
+  if (event.target.matches('[data-language-select]')) {
+    setPreference('language', event.target.value);
+    return;
+  }
+  if (event.target.matches('[data-theme-select]')) {
+    setPreference('theme', event.target.value, false);
+    toast('Tema aplicado. Presiona Guardar configuración para confirmar los datos de empresa.');
+  }
   const quoteForm = event.target.closest('[data-form="quote"]');
   if (quoteForm) {
     recalcQuoteForm();
