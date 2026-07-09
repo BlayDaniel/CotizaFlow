@@ -1334,8 +1334,8 @@ function renderPublic(route) {
       </div>
 
       ${showAuth ? `
-        <div class="auth-modal-backdrop" data-route="home">
-          <section class="login-box auth-modal" onclick="event.stopPropagation()">
+        <div class="auth-modal-backdrop">
+          <section class="login-box auth-modal">
             <div class="modal-header">
               <div><h2>Acceso a CotizaFlow</h2><p>Inicia sesión o crea tu cuenta para continuar.</p></div>
               <button class="btn ghost small" data-route="home">Cerrar</button>
@@ -1353,9 +1353,9 @@ function renderAuthBox() {
   const title = tab === 'forgot' ? 'Recuperar acceso' : tab === 'reset' ? 'Crear nueva contraseña' : 'Acceso';
   return `
     <div class="auth-tabs">
-      <button class="auth-tab ${tab === 'login' ? 'active' : ''}" data-auth-tab="login">Entrar</button>
-      <button class="auth-tab ${tab === 'register' ? 'active' : ''}" data-auth-tab="register">Crear cuenta</button>
-      <button class="auth-tab ${tab === 'forgot' ? 'active' : ''}" data-auth-tab="forgot">Olvidé contraseña</button>
+      <button class="auth-tab ${tab === 'login' ? 'active' : ''}" type="button" data-auth-tab="login">Entrar</button>
+      <button class="auth-tab ${tab === 'register' ? 'active' : ''}" type="button" data-auth-tab="register">Crear cuenta</button>
+      <button class="auth-tab ${tab === 'forgot' ? 'active' : ''}" type="button" data-auth-tab="forgot">Olvidé contraseña</button>
     </div>
     ${state.authMessage ? `<div class="notice">${escapeHtml(state.authMessage)}</div>` : ''}
     ${disabled ? `
@@ -4720,6 +4720,11 @@ function handleReportFilters(form) {
 }
 
 app.addEventListener('click', async (event) => {
+  if (event.target.classList?.contains('auth-modal-backdrop')) {
+    setRoute('home');
+    render();
+    return;
+  }
   const scrollTarget = event.target.closest('[data-scroll-target]')?.dataset.scrollTarget;
   if (scrollTarget) {
     document.getElementById(scrollTarget)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
