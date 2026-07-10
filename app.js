@@ -1136,6 +1136,12 @@ function hasUsableSubscription() {
   return false;
 }
 
+function hasWritableSubscription() {
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  if (['suspended', 'cancelled'].includes(status)) return false;
+  return hasUsableSubscription();
+}
+
 function isSubscriptionBlocked() {
   return BLOCKED_BILLING_STATUSES.has(normalizeSubscriptionStatus(getRawBillingStatus()));
 }

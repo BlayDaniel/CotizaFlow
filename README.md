@@ -117,3 +117,25 @@ Prueba recomendada:
 6. Abrir Control Diario.
 
 Resultado esperado: Dashboard ganadero, Seguimiento comercial y Control Diario deben abrir sin pantalla vacía ni bloqueo incorrecto.
+
+## Fase 10JK v3 - Corrección hasWritableSubscription
+
+Corrección puntual después de detectar errores de interfaz en `dashboard`, `milk` y `commercial-reports` con el mensaje técnico `hasWritableSubscription is not defined`.
+
+Ajuste:
+- Se agregó la función común `hasWritableSubscription()`.
+- La función permite operación en estados `trial`, `active` y `past_due` cuando la suscripción sigue usable.
+- La función bloquea escritura en `suspended` y `cancelled`.
+- No requiere SQL nuevo.
+
+Archivos a reemplazar:
+- `app.js`
+- `README.md`
+
+Prueba recomendada:
+1. Entrar con empresa Demo.
+2. Abrir Dashboard.
+3. Abrir Seguimiento.
+4. Intentar abrir Reportes comerciales: debe mostrar bloqueo por plan, no error técnico.
+5. Intentar abrir Control Diario en Demo: debe mostrar bloqueo por Ganadero Pro, no error técnico.
+6. Entrar con tu cuenta principal y abrir Dashboard.
