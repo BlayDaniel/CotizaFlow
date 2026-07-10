@@ -850,3 +850,47 @@ pre, code { white-space: pre-wrap; word-break: break-word; }
   th, td { padding: 10px; }
   .clipboard-fallback-card { max-height: 90vh; overflow: auto; }
 }
+
+/* Fase 10T: hardening móvil final */
+html { width: 100%; overflow-x: hidden; }
+body { width: 100%; overflow-x: hidden; }
+#app, .app-page, .layout, .main, .landing, .landing-inner { width: 100%; max-width: 100%; min-width: 0; }
+.card > *, .notice > *, .page-header > *, .main > *, .landing-inner > * { max-width: 100%; min-width: 0; }
+.table-wrap { display: block; contain: inline-size; }
+.table-wrap table { width: max-content; min-width: min(560px, 100%); }
+.field input, .field textarea, .field select, .inline-form input, .copy-line input { min-width: 0; max-width: 100%; }
+.btn, .badge, .nav-link { max-width: 100%; }
+.stat-card, .metric, .plan-card, .module-access-card, .qa-plan-card { min-width: 0; overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .topbar { flex-direction: column; align-items: stretch; margin-bottom: 36px; }
+  .nav-actions { display: grid; grid-template-columns: 1fr; }
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .preview-card { transform: none; padding: 14px; }
+  .quote-preview { padding: 14px; }
+  .quote-preview-header, .quote-line, .quote-total, .summary-line { flex-direction: column; align-items: flex-start; }
+  .layout { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+  .sidebar { box-sizing: border-box; width: 100%; max-width: 100%; overflow-x: hidden; }
+  .sidebar nav { width: 100%; max-width: 100%; min-width: 0; }
+  .sidebar nav::-webkit-scrollbar, .tabs::-webkit-scrollbar, .settings-tabs::-webkit-scrollbar { height: 6px; }
+  .main { box-sizing: border-box; padding: 12px; overflow-x: hidden; }
+  .card { padding: 12px; }
+  .page-header { width: 100%; overflow: hidden; }
+  .inline-form { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+  .inline-form input, .inline-form .btn { width: 100%; }
+  .table-wrap { margin-left: 0; margin-right: 0; border-radius: 12px; }
+  .table-wrap table { min-width: 520px; }
+  .compact-table table { min-width: 620px; }
+  .diagnostic-mobile-stack table { min-width: 520px; }
+  .toast { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+  .login-box { margin-top: 28px; padding: 18px; }
+}
+
+@media (max-width: 420px) {
+  .main { padding: 10px; }
+  .card { border-radius: 14px; }
+  .page-header h1 { font-size: 24px; }
+  .btn { padding-left: 12px; padding-right: 12px; }
+  table { font-size: 13px; }
+  th, td { padding: 9px; }
+}

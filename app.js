@@ -6005,12 +6005,34 @@ async function callPlatformAdminUsers(action, payload = {}) {
     body: { action, ...payload }
   });
   if (error) {
-    const message = error.context?.json?.error || error.message || 'Edge Function platform-admin-users no disponible.';
-    const detail = error.context?.status ? `HTTP ${error.context.status}: ${message}` : message;
+    let message = error.message || 'Edge Function platform-admin-users no disponible.';
+    const ctx = error.context || {};
+    try {
+      if (ctx.json?.error) message = ctx.json.error;
+      else if (ctx.body && typeof ctx.body === 'string') {
+        const parsed = JSON.parse(ctx.body);
+        if (parsed?.error) message = parsed.error;
+      }
+    } catch (_) {}
+    const status = ctx.status || ctx.statusCode;
+    const detail = status ? `HTTP ${status}: ${message}` : message;
     throw new Error(detail);
   }
   if (data?.error) throw new Error(data.error);
   return data || {};
+}
+
+async function testPlatformAdminUsers() {
+  if (!requirePermission('users_manage')) return;
+  try {
+    const result = await callPlatformAdminUsers('health');
+    state.lastPlatformAdminError = '';
+    toast(`platform-admin-users OK: ${result.timestamp || 'activo'}`);
+  } catch (error) {
+    state.lastPlatformAdminError = error.message || String(error);
+    toast(`platform-admin-users falla: ${state.lastPlatformAdminError}`);
+  }
+  render();
 }
 
 async function lookupDiagnosticUser(form) {
@@ -6327,7 +6349,9 @@ function renderDiagnostics() {
     'schema_phase10hi_billing_subscription_status.sql',
     'schema_phase10m_referrals_affiliates.sql',
     'schema_phase10n_secure_public_links.sql',
-    'schema_phase10r_auth_admin_global.sql'
+    'schema_phase10r_auth_admin_global.sql',
+    'schema_phase10s_qa_fixes.sql',
+    'schema_phase10t_edge_mobile_hardening.sql'
   ];
   return `
     <div class="page-header">
@@ -6400,6 +6424,7 @@ function renderDiagnostics() {
           ${diagnosticRow('Links públicos', diagnosticBadge(typeof createPublicQuoteLink === 'function'), 'Cotizaciones públicas por token')}
           ${diagnosticRow('Vista pública', diagnosticBadge(true), 'public.html?t=TOKEN')}
           ${diagnosticRow('Edge Functions', diagnosticBadge(Boolean(config.supabaseUrl), true), 'create-public-quote-link, get-public-quote, quote-public-action, platform-admin-users')}
+          ${diagnosticRow('platform-admin-users prueba', '<button class="btn secondary small" data-action="test-platform-admin-users">Probar</button>', 'Valida JWT, service_role, CORS, auditoría y respuesta JSON')}
           ${state.lastPlatformAdminError ? diagnosticRow('platform-admin-users último error', '<span class="badge rejected">Revisar</span>', escapeHtml(state.lastPlatformAdminError)) : ''}
         </tbody></table></div>
       </div>
@@ -7881,6 +7906,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'export-commercial-report-csv') await exportCommercialReportCsv();
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
     if (action === 'copy-diagnostic-summary') await copyDiagnosticSummary();
+    if (action === 'test-platform-admin-users') await testPlatformAdminUsers();
     if (action === 'close-clipboard-fallback') document.getElementById('clipboard-fallback-box')?.remove();
     if (action === 'deactivate-global-user') await setGlobalUserStatus(target.dataset.id, 'inactive');
     if (action === 'activate-global-user') await setGlobalUserStatus(target.dataset.id, 'active');
