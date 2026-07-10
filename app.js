@@ -306,6 +306,27 @@ function renderUtilityBar() {
 }
 
 
+function salesContactUrl(planKey = '') {
+  const plan = PLAN_CATALOG[normalizePlanKey(planKey)] || null;
+  const companyName = state.company?.name || 'mi empresa';
+  const message = `Hola, quiero activar ${plan?.name || 'un plan de CotizaFlow'} para ${companyName}.`;
+  const phone = String(config.salesWhatsapp || config.salesPhone || '').replace(/\D/g, '');
+  if (phone) return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  const subject = encodeURIComponent(`CotizaFlow - ${plan?.name || 'Planes'}`);
+  return `mailto:${config.salesEmail || 'ventas@cotizaflow.app'}?subject=${subject}&body=${encodeURIComponent(message)}`;
+}
+
+function renderUpgradeActions(planKey = '') {
+  return `
+    <div class="actions upgrade-actions">
+      <button class="btn primary" data-route="billing">Ver planes</button>
+      <a class="btn secondary" href="${escapeHtml(salesContactUrl(planKey))}" target="_blank" rel="noopener">Contactar por WhatsApp</a>
+      <button class="btn ghost" data-route="dashboard">Volver</button>
+    </div>
+  `;
+}
+
+
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
@@ -1151,17 +1172,43 @@ function renderFeatureLocked(featureKey, title = 'Función no incluida en tu pla
   const feature = FEATURE_DEFINITIONS[featureKey]?.label || 'esta función';
   const planName = featureUpgradePlan(featureKey);
   const text = description || `${feature} está disponible en ${planName}. Actualiza tu plan para activar esta función.`;
+  const planKey = planKeyByCommercialName(planName);
   return `
     <section class="card access-denied upgrade-card">
-      <span class="badge locked">Premium</span>
+      <span class="badge locked">Disponible en ${escapeHtml(planName)}</span>
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(text)}</p>
-      <div class="actions">
-        <button class="btn primary" data-route="billing">Actualizar plan</button>
-        <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
+      <div class="upgrade-value-grid">
+        <div><strong>Valor comercial</strong><span>${escapeHtml(upgradeValueText(featureKey))}</span></div>
+        <div><strong>Plan actual</strong><span>${escapeHtml(getEffectivePlan().name)}</span></div>
+        <div><strong>Estado</strong><span>${escapeHtml(normalizeSubscriptionStatus(getRawBillingStatus()))}</span></div>
       </div>
+      ${renderUpgradeActions(planKey)}
     </section>
   `;
+}
+
+function planKeyByCommercialName(name = '') {
+  const normalized = String(name).toLowerCase();
+  if (normalized.includes('ganadero')) return 'ganadero_pro';
+  if (normalized.includes('empresa')) return 'crm_empresa';
+  if (normalized.includes('pro')) return 'crm_pro';
+  if (normalized.includes('básico') || normalized.includes('basico')) return 'crm_basico';
+  return getEffectivePlanKey();
+}
+
+function upgradeValueText(featureKey) {
+  const messages = {
+    invoices: 'Convierte cotizaciones en facturas comerciales y controla ventas pendientes.',
+    partial_payments: 'Registra abonos y saldos sin depender de hojas de cálculo.',
+    accounts_receivable: 'Identifica clientes con deuda, facturas vencidas y dinero por cobrar.',
+    roles_advanced: 'Separa permisos entre ventas, contabilidad, operación diaria y lectura.',
+    exports_csv: 'Lleva reportes a Excel, contabilidad o análisis externo.',
+    ganadero_module: 'Controla productores, entregas diarias, comisiones y liquidaciones mensuales.',
+    ganadero_daily_control: 'Registra litros por productor sin duplicar clientes del CRM.',
+    integrations: 'Conecta pagos, automatizaciones y procesos externos cuando el negocio crece.'
+  };
+  return messages[featureKey] || 'Función premium para operar con más control y menos trabajo manual.';
 }
 
 
@@ -2146,6 +2193,8 @@ function renderDashboard() {
       </div>
     </div>
 
+    ${renderPlanCommercialNudges()}
+
     <section class="grid cols-4">
       <div class="card metric"><span>Cotizaciones</span><strong>${analytics.quotes.length}</strong></div>
       <div class="card metric"><span>Pendientes</span><strong>${analytics.pending.length}</strong></div>
@@ -2453,6 +2502,83 @@ function renderUsageCard() {
       </div>
       ${status === 'past_due' ? `<div class="notice warning" style="margin-top:14px;">Tu suscripción tiene pago pendiente. Puedes consultar datos, pero algunas funciones podrán bloquearse si pasa a suspendida.</div>` : ''}
       ${isSubscriptionBlocked() ? `<div class="notice danger" style="margin-top:14px;">La suscripción está ${escapeHtml(status)}. El sistema queda en modo consulta; actualiza el plan para crear nuevos registros.</div>` : ''}
+    </section>
+  `;
+}
+
+
+function importantFeatureKeysForBusiness() {
+  const keys = ['invoices','partial_payments','accounts_receivable','exports_csv','roles_advanced'];
+  if (state.company?.business_type === 'asociacion_ganaderos') keys.push('ganadero_module','ganadero_daily_control','ganadero_monthly_summary','ganadero_pdf','ganadero_csv');
+  keys.push('integrations','custom_reports');
+  return [...new Set(keys)];
+}
+
+function renderPlanCommercialNudges() {
+  const planKey = getEffectivePlanKey();
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  const locked = importantFeatureKeysForBusiness().filter(key => !canUseFeature(key));
+  const topLocked = locked.slice(0, 3);
+  if (planKey === 'crm_empresa' && !isSubscriptionBlocked() && status !== 'past_due') return '';
+  const title = isSubscriptionBlocked()
+    ? 'Cuenta en modo consulta'
+    : planKey === 'demo'
+      ? 'Demo limitado para pruebas'
+      : topLocked.length
+        ? 'Funciones disponibles al actualizar'
+        : 'Plan activo';
+  const detail = isSubscriptionBlocked()
+    ? 'Puedes entrar, revisar información y acceder a Planes y pagos, pero no crear nuevos registros hasta reactivar la suscripción.'
+    : planKey === 'demo'
+      ? 'La demo no está diseñada para operar una empresa real. Actualiza para quitar límites y marca de agua.'
+      : topLocked.length
+        ? `Tu plan actual no incluye: ${topLocked.map(k => FEATURE_DEFINITIONS[k]?.label || k).join(', ')}.`
+        : 'El plan actual está activo y cubre los módulos principales.';
+  return `
+    <section class="card commercial-nudge">
+      <div>
+        <span class="badge ${isSubscriptionBlocked() ? 'danger' : 'locked'}">${escapeHtml(getEffectivePlan().name)}</span>
+        <h2>${escapeHtml(title)}</h2>
+        <p>${escapeHtml(detail)}</p>
+      </div>
+      <div class="actions">
+        <button class="btn primary" data-route="billing">Ver plan</button>
+        ${topLocked[0] ? `<a class="btn secondary" href="${escapeHtml(salesContactUrl(planKeyByCommercialName(featureUpgradePlan(topLocked[0]))))}" target="_blank" rel="noopener">Consultar upgrade</a>` : ''}
+      </div>
+    </section>
+  `;
+}
+
+function renderModuleAccessGrid() {
+  const sections = [
+    { key: 'clients', label: 'Clientes / CRM', plan: 'CRM Básico' },
+    { key: 'quotes', label: 'Cotizaciones', plan: 'CRM Básico' },
+    { key: 'invoices', label: 'Facturas comerciales', plan: 'CRM Básico' },
+    { key: 'partial_payments', label: 'Pagos parciales', plan: 'CRM Pro' },
+    { key: 'accounts_receivable', label: 'Cuentas por cobrar', plan: 'CRM Pro' },
+    { key: 'roles_advanced', label: 'Roles avanzados', plan: 'CRM Pro' },
+    { key: 'exports_csv', label: 'Exportaciones CSV', plan: 'CRM Pro' },
+    { key: 'ganadero_module', label: 'Control Diario ganadero', plan: 'Ganadero Pro' },
+    { key: 'custom_reports', label: 'Reportes personalizados', plan: 'CRM Empresa' },
+    { key: 'integrations', label: 'Integraciones', plan: 'CRM Empresa' }
+  ];
+  return `
+    <section class="card" style="margin-top:18px;">
+      <div class="page-header" style="margin-bottom:12px;">
+        <div><h2>Acceso por módulos</h2><p>Vista comercial de lo incluido, bloqueado y disponible por upgrade.</p></div>
+      </div>
+      <div class="module-access-grid">
+        ${sections.map(item => {
+          const allowed = canUseFeature(item.key);
+          return `
+            <div class="module-access-card ${allowed ? 'allowed' : 'locked'}">
+              <span class="badge ${allowed ? 'ok' : 'locked'}">${allowed ? 'Incluido' : item.plan}</span>
+              <strong>${escapeHtml(item.label)}</strong>
+              <p>${escapeHtml(allowed ? 'Disponible en el plan actual.' : upgradeValueText(item.key))}</p>
+            </div>
+          `;
+        }).join('')}
+      </div>
     </section>
   `;
 }
@@ -4646,6 +4772,7 @@ function renderBilling() {
     ${renderConfigNav('billing')}
 
     <div style="margin-top:18px;">${renderUsageCard()}</div>
+    ${renderModuleAccessGrid()}
 
     <section class="grid cols-4" style="margin-top:18px;">
       ${['crm_basico','crm_pro','ganadero_pro','crm_empresa'].map(planKey => renderPlanCard(planKey, usage.planKey, provider)).join('')}
@@ -4695,6 +4822,7 @@ function renderPlanCard(planKey, currentPlanKey, provider) {
       <button class="btn ${isCurrent ? 'secondary' : 'primary'} full" data-action="checkout" data-plan="${planKey}" ${isCurrent ? 'disabled' : ''}>
         ${isCurrent ? 'Activo' : plan.price === null ? 'Solicitar propuesta' : 'Actualizar plan'}
       </button>
+      ${isCurrent ? '' : `<a class="btn ghost full" href="${escapeHtml(salesContactUrl(planKey))}" target="_blank" rel="noopener">Consultar implementación</a>`}
     </div>
   `;
 }
@@ -5718,9 +5846,7 @@ async function startCheckout(planKey) {
     return;
   }
   if (normalizedPlan === 'crm_empresa' || plan.price === null) {
-    const subject = encodeURIComponent(`CotizaFlow - ${plan.name}`);
-    const body = encodeURIComponent(`Hola, deseo información para ${plan.name} de ${state.company?.name || 'mi empresa'}. Necesito revisar implementación, usuarios, límites e integraciones.`);
-    window.location.href = `mailto:${config.salesEmail || 'ventas@cotizaflow.app'}?subject=${subject}&body=${body}`;
+    window.location.href = salesContactUrl(normalizedPlan);
     return;
   }
   if (mode !== 'supabase') {
