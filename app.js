@@ -5863,6 +5863,48 @@ function renderReferralsTable() {
   `;
 }
 
+
+function commissionStatusLabel(status) {
+  const labels = {
+    pending: 'Pendiente',
+    available: 'Disponible',
+    approved: 'Aprobada',
+    paid: 'Pagada',
+    cancelled: 'Cancelada',
+    refunded: 'Reembolsada'
+  };
+  return labels[status] || status || 'Pendiente';
+}
+
+function commissionStatusClass(status) {
+  if (status === 'available' || status === 'approved' || status === 'paid') return 'success';
+  if (status === 'cancelled' || status === 'refunded') return 'danger';
+  return '';
+}
+
+function renderCommissionsTable() {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fecha</th><th>Referido</th><th>Periodo</th><th>Base</th><th>Comisión</th><th>Estado</th><th>Disponible</th></tr></thead>
+        <tbody>
+          ${state.commissions.map(c => `
+            <tr>
+              <td>${escapeHtml((c.created_at || c.commission_date || '').slice(0, 10) || 'Pendiente')}</td>
+              <td>${escapeHtml(c.referred_company_name || c.company_name || c.referred_email || c.referral_id || 'Referido')}</td>
+              <td>${escapeHtml(c.period_label || c.billing_period || c.month || 'Mensual')}</td>
+              <td>${money(c.base_amount || c.invoice_amount || c.subscription_amount || 0)}</td>
+              <td><strong>${money(c.amount || c.commission_amount || 0)}</strong></td>
+              <td><span class="badge ${commissionStatusClass(c.status)}">${escapeHtml(commissionStatusLabel(c.status))}</span></td>
+              <td>${escapeHtml((c.available_at || c.released_at || c.paid_at || '').slice(0, 10) || 'Pendiente')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function suggestAffiliateCode() {
   const emailPrefix = String(state.session?.email || 'partner').split('@')[0];
   return sanitizeReferralCode(emailPrefix).slice(0, 16) || `CF${Date.now().toString().slice(-6)}`;

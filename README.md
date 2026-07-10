@@ -240,3 +240,13 @@ Las comisiones reales todavía deben registrarse manualmente o luego por webhook
 ## Fase 10M v2 - Corrección SQL
 
 Se agregó compatibilidad para bases donde `create_my_affiliate(text,text)` ya existía con otro tipo de retorno. El SQL ahora elimina y recrea solo las funciones RPC necesarias antes de definirlas nuevamente. No elimina datos de afiliados, referidos ni comisiones.
+
+## Fase 10M v3 - Fix interfaz afiliados
+
+Corrección aplicada:
+- Se agregó `renderCommissionsTable()` que faltaba en el módulo Referidos/Afiliados.
+- Se agregaron helpers `commissionStatusLabel()` y `commissionStatusClass()`.
+- Se validó `app.js` con `node --check`.
+- Se ejecutó una revisión estática de referencias a funciones faltantes para evitar errores tipo `... is not defined` en interfaz.
+
+No requiere SQL nuevo si ya ejecutaste la versión v2 del SQL de Fase 10M.
