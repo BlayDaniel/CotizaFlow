@@ -6054,7 +6054,7 @@ async function testPlatformAdminUsers() {
   try {
     const result = await callPlatformAdminUsers('health');
     state.lastPlatformAdminError = '';
-    toast(`platform-admin-users OK: ${result.timestamp || 'activo'}`);
+    toast(`platform-admin-users OK: ${result.function_version || result.timestamp || 'activo'}`);
   } catch (error) {
     state.lastPlatformAdminError = error.message || String(error);
     toast(`platform-admin-users falla: ${state.lastPlatformAdminError}`);
