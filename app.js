@@ -6376,7 +6376,7 @@ function renderDiagnostics() {
     <section class="grid cols-2" style="margin-top:18px;">
       <div class="card">
         <h2>Salud general</h2>
-        <div class="table-wrap"><table><thead><tr><th>Chequeo</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
+        <div class="table-wrap diagnostic-table-wrap"><table><thead><tr><th>Chequeo</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
           ${diagnosticRow('Sesión', diagnosticBadge(Boolean(state.session || mode === 'local')), state.session?.email || 'Demo local')}
           ${diagnosticRow('Empresa activa', diagnosticBadge(Boolean(state.company?.id || mode === 'local')), state.company?.name || 'Empresa local')}
           ${diagnosticRow('Suscripción operativa', diagnosticBadge(writable, status === 'past_due'), subscriptionStatusNotice() || 'Sin bloqueo de escritura')}
@@ -6401,7 +6401,7 @@ function renderDiagnostics() {
 
     <section class="card" style="margin-top:18px;">
       <h2>Acceso por módulo</h2>
-      <div class="table-wrap"><table><thead><tr><th>Módulo</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>${moduleDiagnosticRows()}</tbody></table></div>
+      <div class="table-wrap diagnostic-table-wrap"><table><thead><tr><th>Módulo</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>${moduleDiagnosticRows()}</tbody></table></div>
     </section>
 
     ${renderDiagnosticUserPanel()}
@@ -6409,7 +6409,7 @@ function renderDiagnostics() {
     <section class="card" style="margin-top:18px;">
       <h2>Helpers críticos de interfaz</h2>
       <p class="help">Estos chequeos reducen errores tipo “función no definida” antes de seguir agregando módulos.</p>
-      <div class="table-wrap"><table><thead><tr><th>Función</th><th>Estado</th><th>Uso</th></tr></thead><tbody>${helperDiagnosticRows()}</tbody></table></div>
+      <div class="table-wrap diagnostic-table-wrap"><table><thead><tr><th>Función</th><th>Estado</th><th>Uso</th></tr></thead><tbody>${helperDiagnosticRows()}</tbody></table></div>
     </section>
 
     <section class="grid cols-2" style="margin-top:18px;">
@@ -6420,7 +6420,7 @@ function renderDiagnostics() {
       </div>
       <div class="card">
         <h2>Backend seguro</h2>
-        <div class="table-wrap"><table><tbody>
+        <div class="table-wrap diagnostic-table-wrap"><table><tbody>
           ${diagnosticRow('Links públicos', diagnosticBadge(typeof createPublicQuoteLink === 'function'), 'Cotizaciones públicas por token')}
           ${diagnosticRow('Vista pública', diagnosticBadge(true), 'public.html?t=TOKEN')}
           ${diagnosticRow('Edge Functions', diagnosticBadge(Boolean(config.supabaseUrl), true), 'create-public-quote-link, get-public-quote, quote-public-action, platform-admin-users')}

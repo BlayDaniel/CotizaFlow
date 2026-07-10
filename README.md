@@ -89,3 +89,27 @@ supabase functions deploy platform-admin-users
 ```
 
 Verifica en Supabase Edge Functions > Secrets que exista `SUPABASE_SERVICE_ROLE_KEY`.
+
+## Fase 10V - Corrección Edge Function y layout estable
+
+Esta versión corrige dos problemas detectados después de 10T/10U:
+
+1. El diseño de escritorio no debe romper la columna derecha. Se removieron reglas CSS agresivas de ancho/overflow y se limitaron los ajustes fuertes a mobile.
+2. `platform-admin-users` debe responder con JSON controlado. Se agregó `supabase/config.toml` con `verify_jwt = false` para que la función haga su propia validación interna del usuario autenticado y no sea bloqueada antes de ejecutar el código.
+
+Pasos:
+
+1. Reemplazar `app.js`, `styles.css` y `README.md`.
+2. Subir/actualizar:
+   - `supabase/functions/platform-admin-users/index.ts`
+   - `supabase/functions/_shared/cors.ts`
+   - `supabase/config.toml`
+3. Ejecutar en SQL Editor:
+   - `supabase/schema_phase10u_edge_mobile_layout.sql`
+4. Desplegar:
+
+```bash
+supabase functions deploy platform-admin-users
+```
+
+Luego probar en Configuración > Diagnóstico > Backend seguro > Probar.
