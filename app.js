@@ -1222,8 +1222,21 @@ function normalizePlanKey(planValue) {
   return LEGACY_PLAN_ALIASES[plan] || (PLAN_CATALOG[plan] ? plan : 'demo');
 }
 
+function getConfiguredPlanKey() {
+  // Prioridad compatible: la suscripción editada manualmente y companies son la fuente operativa.
+  // company_saas_entitlements puede quedar desfasada si el SQL anterior no tiene trigger; por eso va al final.
+  return normalizePlanKey(
+    state.billing?.plan_id ||
+    state.billing?.plan ||
+    state.company?.active_plan_id ||
+    state.company?.plan ||
+    state.saasEntitlement?.plan_id ||
+    'demo'
+  );
+}
+
 function getEffectivePlanKey() {
-  const plan = normalizePlanKey(state.saasEntitlement?.plan_id || state.billing?.plan_id || state.billing?.plan || state.company?.active_plan_id || state.company?.plan || 'demo');
+  const plan = getConfiguredPlanKey();
   if (isSubscriptionBlocked()) return 'demo';
   if (plan === 'crm_empresa') return hasUsableSubscription() ? 'crm_empresa' : 'demo';
   return hasUsableSubscription() ? (PLAN_CATALOG[plan] ? plan : 'demo') : 'demo';
@@ -1240,8 +1253,9 @@ function planFeatureSet(planKey = getEffectivePlanKey()) {
 
 function canUseFeature(featureKey) {
   if (!featureKey) return true;
-  if (getEffectivePlanKey() === 'crm_empresa') return true;
-  return planFeatureSet().has(String(featureKey));
+  const effectivePlan = getEffectivePlanKey();
+  if (effectivePlan === 'crm_empresa') return true;
+  return planFeatureSet(effectivePlan).has(String(featureKey));
 }
 
 function featureUpgradePlan(featureKey) {
@@ -1274,7 +1288,12 @@ function isDairyBusiness() {
 }
 
 function canOperateGanadero() {
-  return isDairyBusiness() && canUseFeature('ganadero_module') && can('milk_read');
+  if (!isDairyBusiness()) return false;
+  if (!can('milk_read')) return false;
+  // Ganadero Pro y CRM Empresa habilitan el dashboard ganadero, seguimiento y Control Diario.
+  // Se usa getEffectivePlanKey(), que ya evita entitlements viejos y respeta suspensión/cancelación.
+  const planKey = getEffectivePlanKey();
+  return ['ganadero_pro', 'crm_empresa'].includes(planKey) && canUseFeature('ganadero_module');
 }
 
 function renderGanaderoUpgrade() {
@@ -2074,6 +2093,7 @@ function renderApp(route) {
         <nav>
           ${navLink('dashboard', t('dashboard'))}
           ${can('reports_read') ? navLink('reports', t('followup')) : ''}
+          ${can('reports_read') ? navLink(canUseFeature('accounts_receivable') ? 'commercial-reports' : 'commercial-reports', 'Reportes' + (canUseFeature('accounts_receivable') ? '' : ' 🔒')) : ''}
           ${renderMilkNavLink()}
           ${can('quotes_read') ? navLink('quotes', t('quotes')) : ''}
           ${can('invoices_read') ? navLink(canUseFeature('invoices') ? 'invoices' : 'invoices-upgrade', t('invoices') + (canUseFeature('invoices') ? '' : ' 🔒')) : ''}
@@ -2089,7 +2109,7 @@ function renderApp(route) {
           <button class="btn secondary small" data-action="logout" style="margin-top:12px;">Salir</button>
         </div>
       </aside>
-      <main class="main">${renderUtilityBar()}${renderRoute(route)}</main>
+      <main class="main">${renderUtilityBar()}${safeRenderRoute(route)}</main>
     </div>
   `;
 }
@@ -2103,6 +2123,23 @@ function renderMilkNavLink() {
   if (!can('milk_read')) return '';
   if (canOperateGanadero()) return navLink('milk', t('milkControl'));
   return navLink('ganadero-upgrade', `${t('milkControl')} 🔒`);
+}
+
+function safeRenderRoute(route) {
+  try {
+    return renderRoute(route);
+  } catch (error) {
+    console.error('Error renderizando ruta', route, error);
+    return `
+      <section class="card access-denied">
+        <h1>No se pudo abrir esta pantalla</h1>
+        <p>Se detectó un error de interfaz en <strong>${escapeHtml(route || 'dashboard')}</strong>. La sesión sigue activa.</p>
+        <p class="help">Detalle técnico: ${escapeHtml(error.message || String(error))}</p>
+        <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
+        <button class="btn primary" data-route="billing">Revisar plan</button>
+      </section>
+    `;
+  }
 }
 
 function renderRoute(route) {
@@ -2119,6 +2156,8 @@ function renderRoute(route) {
     quotes: 'quotes_read',
     'quote-new': 'quotes_write',
     reports: 'reports_read',
+    'commercial-reports': 'reports_read',
+    'plan-qa': 'users_manage',
     invoices: 'invoices_read',
     clients: 'clients_read',
     catalog: 'catalog_read',
@@ -2138,6 +2177,7 @@ function renderRoute(route) {
   if (route === 'catalog' && !canUseFeature('catalog')) return renderFeatureLocked('catalog', 'Catálogo no incluido');
   if (route === 'clients' && !canUseFeature('clients')) return renderFeatureLocked('clients', 'Clientes no incluido');
   if (route === 'reports' && !canUseFeature('follow_up')) return renderFeatureLocked('follow_up', 'Seguimiento no incluido');
+  if (route === 'commercial-reports' && !canUseFeature('accounts_receivable')) return renderFeatureLocked('accounts_receivable', 'Reportes comerciales disponibles en CRM Pro', 'Actualiza a CRM Pro para ver ventas, facturas, cobros, cuentas por cobrar y exportaciones operativas.');
   if (route === 'templates' && !canUseFeature('whatsapp_templates')) return renderFeatureLocked('whatsapp_templates', 'Plantillas de WhatsApp no incluidas');
   if (route === 'affiliates' && !canUseFeature('referrals')) return renderFeatureLocked('referrals', 'Referidos no incluidos');
   if (route === 'integrations' && !canUseFeature('integrations')) return renderFeatureLocked('integrations', 'Integraciones no incluidas');
@@ -2146,6 +2186,8 @@ function renderRoute(route) {
     case 'quotes': return renderQuotes();
     case 'quote-new': return renderQuoteForm();
     case 'reports': return renderReports();
+    case 'commercial-reports': return renderCommercialReports();
+    case 'plan-qa': return renderPlanQaCenter();
     case 'invoices': return renderInvoices();
     case 'clients': return renderClients();
     case 'catalog': return renderCatalog();
@@ -2454,6 +2496,7 @@ function renderDashboard() {
       </div>
       <div class="header-actions">
         <button class="btn secondary" data-route="reports">Ver seguimiento</button>
+        ${canUseFeature('accounts_receivable') ? '<button class="btn primary" data-route="commercial-reports">Reportes comerciales</button>' : '<button class="btn secondary" data-route="billing">Reportes en CRM Pro</button>'}
       </div>
     </div>
 
@@ -2590,6 +2633,243 @@ function applyReportFilters(quotes, filters = reportFilters()) {
 
     return true;
   });
+}
+
+
+function renderCommercialReports() {
+  const analytics = getCommercialAnalytics();
+  const invoiceStats = getInvoiceAnalytics();
+  const issued = invoiceStats.issued || [];
+  const monthly = getMonthlyCommercialSummary();
+  const topReceivables = getTopReceivables().slice(0, 8);
+  const conversionRate = analytics.quotes.length ? Math.round((analytics.accepted.length / analytics.quotes.length) * 100) : 0;
+  const canExport = canExportCommercialReports();
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Reportes comerciales</h1>
+        <p>Resumen simple de ventas, facturas comerciales internas, cobros y cuentas por cobrar.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-route="dashboard">Dashboard</button>
+        ${canExport ? '<button class="btn primary" data-action="export-commercial-report-csv">Exportar CSV</button>' : '<button class="btn secondary" data-route="billing">CSV en CRM Pro</button>'}
+      </div>
+    </div>
+
+    <section class="grid cols-4">
+      <div class="card metric"><span>Cotizado</span><strong>${money(analytics.quotes.reduce((sum, q) => sum + q.totals.total, 0))}</strong></div>
+      <div class="card metric"><span>Conversión</span><strong>${conversionRate}%</strong></div>
+      <div class="card metric"><span>Facturado</span><strong>${money(invoiceStats.totalIssued)}</strong></div>
+      <div class="card metric"><span>Por cobrar</span><strong>${money(invoiceStats.totalReceivable)}</strong></div>
+    </section>
+
+    <section class="grid cols-4" style="margin-top:18px;">
+      <div class="card metric"><span>Cobrado</span><strong>${money(invoiceStats.totalPaid)}</strong></div>
+      <div class="card metric"><span>Facturas emitidas</span><strong>${invoiceStats.issuedCount}</strong></div>
+      <div class="card metric"><span>Vencidas</span><strong>${invoiceStats.overdue.length}</strong></div>
+      <div class="card metric"><span>Borradores</span><strong>${invoiceStats.draftCount}</strong></div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px; align-items:start;">
+      <div class="card">
+        <h2>Resumen mensual</h2>
+        ${monthly.length ? renderMonthlyCommercialSummary(monthly) : '<div class="empty">Todavía no hay datos comerciales para resumir.</div>'}
+      </div>
+      <div class="card">
+        <h2>Mayores saldos por cobrar</h2>
+        ${topReceivables.length ? renderReceivablesTable(topReceivables) : '<div class="empty">No hay saldos pendientes.</div>'}
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Lectura operativa</h2>
+      <div class="bullets">
+        <span>Si el monto cotizado es alto pero la conversión baja, prioriza seguimiento y ajuste de plantillas.</span>
+        <span>Si cuentas por cobrar sube, conviene registrar pagos parciales y enviar recordatorios.</span>
+        <span>Las facturas son comerciales internas; NCF/e-CF fiscal queda para una fase posterior con backend seguro.</span>
+      </div>
+    </section>
+  `;
+}
+
+function getMonthlyCommercialSummary() {
+  const rows = new Map();
+  const keyOf = (dateValue) => {
+    const d = safeDate(dateValue) || new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  (state.quotes || []).forEach(q => {
+    const nq = normalizeQuote(q);
+    const key = keyOf(nq.created_at);
+    const row = rows.get(key) || { month: key, quoted: 0, accepted: 0, invoiced: 0, paid: 0, receivable: 0, quotes: 0, invoices: 0 };
+    row.quoted += nq.totals.total;
+    row.quotes += 1;
+    if (nq.status === 'accepted') row.accepted += nq.totals.total;
+    rows.set(key, row);
+  });
+  (state.invoices || []).forEach(inv => {
+    const ni = normalizeInvoice(inv);
+    const status = effectiveInvoiceStatus(ni);
+    const key = keyOf(ni.issue_date || ni.created_at);
+    const row = rows.get(key) || { month: key, quoted: 0, accepted: 0, invoiced: 0, paid: 0, receivable: 0, quotes: 0, invoices: 0 };
+    if (status !== 'draft' && status !== 'void') {
+      row.invoiced += invoiceTotals(ni).total;
+      row.paid += invoicePaidAmount(ni);
+      row.receivable += invoiceBalance(ni);
+      row.invoices += 1;
+    }
+    rows.set(key, row);
+  });
+  return [...rows.values()].sort((a,b) => b.month.localeCompare(a.month)).slice(0, 12);
+}
+
+function renderMonthlyCommercialSummary(rows) {
+  return `
+    <div class="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Mes</th><th>Cotizado</th><th>Facturado</th><th>Cobrado</th><th>Por cobrar</th></tr></thead>
+        <tbody>${rows.map(row => `<tr><td><strong>${escapeHtml(row.month)}</strong></td><td>${money(row.quoted)}</td><td>${money(row.invoiced)}</td><td>${money(row.paid)}</td><td>${money(row.receivable)}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function getTopReceivables() {
+  return (state.invoices || [])
+    .map(inv => normalizeInvoice(inv))
+    .filter(inv => !['draft','void','paid'].includes(effectiveInvoiceStatus(inv)) && invoiceBalance(inv) > 0)
+    .map(inv => ({ invoice: inv, client: getClient(inv.client_id), balance: invoiceBalance(inv), total: invoiceTotals(inv).total, due_date: inv.due_date }))
+    .sort((a,b) => b.balance - a.balance);
+}
+
+function renderReceivablesTable(rows) {
+  return `
+    <div class="table-wrap compact-table">
+      <table>
+        <thead><tr><th>Cliente</th><th>Factura</th><th>Vence</th><th>Saldo</th></tr></thead>
+        <tbody>${rows.map(row => `<tr><td>${escapeHtml(row.client?.name || 'Sin cliente')}</td><td><button class="link-button" data-route="invoice-view/${row.invoice.id}">${escapeHtml(row.invoice.invoice_number)}</button></td><td>${formatDate(row.due_date)}</td><td><strong>${money(row.balance)}</strong></td></tr>`).join('')}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function canExportCommercialReports() {
+  if (!canUseFeature('exports_csv')) return false;
+  if (!hasWritableSubscription()) return false;
+  const usage = getPlanUsage();
+  const exportsResource = usage.resources?.exports;
+  return !exportsResource || exportsResource.limit == null || Number(exportsResource.used || 0) < Number(exportsResource.limit || 0);
+}
+
+async function exportCommercialReportCsv() {
+  if (!canExportCommercialReports()) {
+    toast('Exportación CSV disponible en CRM Pro con cuenta activa y límite disponible.');
+    setRoute('billing');
+    render();
+    return;
+  }
+  const rows = getMonthlyCommercialSummary();
+  const csvRows = [['mes','cotizado','aceptado','facturado','cobrado','por_cobrar','cotizaciones','facturas']];
+  rows.forEach(row => csvRows.push([row.month, row.quoted, row.accepted, row.invoiced, row.paid, row.receivable, row.quotes, row.invoices]));
+  downloadTextFile(`reporte-comercial-${new Date().toISOString().slice(0,10)}.csv`, csvRows.map(r => r.map(csvEscape).join(',')).join('\n'), 'text/csv;charset=utf-8');
+  recordExportUsage('commercial_report_csv');
+}
+
+function csvEscape(value) {
+  const text = String(value ?? '');
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function downloadTextFile(filename, content, mimeType = 'text/plain;charset=utf-8') {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderPlanQaAccessCard() {
+  return `
+    <section class="card" style="margin-top:18px;">
+      <div class="page-header" style="margin-bottom:0;">
+        <div>
+          <h2>QA por planes</h2>
+          <p>Centro de validación para confirmar límites, módulos y estados antes de vender.</p>
+        </div>
+        <button class="btn secondary" data-route="plan-qa">Abrir QA</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderPlanQaCenter() {
+  const current = getPlanUsage();
+  return `
+    <div class="page-header">
+      <div>
+        <h1>QA por planes</h1>
+        <p>Validación manual rápida para Demo, CRM Básico, CRM Pro, Ganadero Pro y CRM Empresa.</p>
+      </div>
+      <div class="header-actions"><button class="btn secondary" data-route="billing">Planes y pagos</button></div>
+    </div>
+    <section class="card">
+      <h2>Empresa actual</h2>
+      <div class="billing-mini-grid">
+        <div><span>Plan efectivo</span><strong>${escapeHtml(current.plan.name)}</strong></div>
+        <div><span>Estado</span><strong>${escapeHtml(subscriptionStatusLabel(getBillingSnapshot().status))}</strong></div>
+        <div><span>Tipo negocio</span><strong>${escapeHtml(businessTypeLabel(state.company?.business_type))}</strong></div>
+        <div><span>Rol actual</span><strong>${escapeHtml(currentRoleLabel())}</strong></div>
+      </div>
+    </section>
+    <section class="grid cols-2" style="margin-top:18px; align-items:start;">
+      ${Object.keys(PLAN_CATALOG).map(key => renderPlanQaCard(key)).join('')}
+    </section>
+  `;
+}
+
+function currentRoleLabel() {
+  const role = normalizeRole(state.currentMember?.role || state.session?.role || 'superuser');
+  return ROLE_DEFINITIONS[role]?.label || role;
+}
+
+function renderPlanQaCard(planKey) {
+  const plan = PLAN_CATALOG[planKey];
+  const features = ['clients','quotes','invoices','partial_payments','accounts_receivable','exports_csv','ganadero_module','roles_advanced','multi_company'];
+  const included = new Set(plan.features || []);
+  return `
+    <div class="card qa-plan-card">
+      <h2>${escapeHtml(plan.name)}</h2>
+      <p>${escapeHtml(plan.description || '')}</p>
+      <div class="billing-mini-grid">
+        <div><span>Usuarios</span><strong>${plan.users}</strong></div>
+        <div><span>Clientes</span><strong>${formatLimit(plan.maxClients)}</strong></div>
+        <div><span>Cotizaciones</span><strong>${formatLimit(plan.maxQuotesPerMonth)}</strong></div>
+        <div><span>Facturas</span><strong>${formatLimit(plan.maxInvoicesPerMonth)}</strong></div>
+      </div>
+      <div class="feature-checklist">
+        ${features.map(feature => `<span class="badge ${included.has(feature) ? 'success' : 'muted'}">${included.has(feature) ? '✓' : '×'} ${escapeHtml(FEATURE_DEFINITIONS[feature]?.label || feature)}</span>`).join('')}
+      </div>
+      <div class="qa-steps">
+        ${renderPlanQaSteps(planKey)}
+      </div>
+    </div>
+  `;
+}
+
+function renderPlanQaSteps(planKey) {
+  const steps = {
+    demo: ['Crear 5 clientes: debe permitirlos.', 'Intentar crear cliente 6: debe bloquear.', 'Intentar CSV: debe mostrar upgrade.', 'PDF debe incluir marca DEMO.'],
+    crm_basico: ['Crear clientes y cotizaciones dentro del límite.', 'Facturas simples disponibles.', 'Pagos parciales y cuentas por cobrar avanzadas deben pedir CRM Pro.', 'Ganadero debe pedir Ganadero Pro.'],
+    crm_pro: ['Facturas comerciales y pagos parciales disponibles.', 'Cuentas por cobrar disponible.', 'CSV comercial disponible.', 'Control Diario ganadero debe estar bloqueado.'],
+    ganadero_pro: ['Con tipo Asociación Ganaderos debe abrir Control Diario.', 'PDF y CSV ganadero disponibles.', 'Dashboard ganadero visible.', 'Facturación de insumos y servicios disponible.'],
+    crm_empresa: ['Debe incluir módulos avanzados.', 'Multiempresa e integraciones quedan visibles como premium empresarial.', 'Límites amplios.', 'Reportes personalizados preparados.']
+  }[planKey] || [];
+  return `<ol>${steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}</ol>`;
 }
 
 function renderReports() {
@@ -5106,6 +5386,7 @@ function renderBilling() {
 
     ${renderBillingAdminForm()}
     ${renderSubscriptionRulesCard()}
+    ${can('users_manage') ? renderPlanQaAccessCard() : ''}
 
     <section class="card" style="margin-top:18px;">
       <h2>Setup e implementación</h2>
@@ -6187,6 +6468,36 @@ async function startCheckout(planKey) {
   window.location.href = data.url;
 }
 
+async function syncSaasEntitlementFromBilling(planId, status, periodStart, periodEnd) {
+  if (mode !== 'supabase' || !supabaseClient || !state.company?.id) return;
+  const plan = PLAN_CATALOG[planId] || PLAN_CATALOG.demo;
+  const payload = {
+    company_id: state.company.id,
+    plan_id: planId,
+    plan_name: plan.name,
+    subscription_status: status,
+    current_period_start: periodStart,
+    current_period_end: periodEnd,
+    max_users: plan.users,
+    max_clients: plan.maxClients,
+    max_quotes_per_month: plan.maxQuotesPerMonth,
+    max_invoices_per_month: plan.maxInvoicesPerMonth,
+    max_exports_per_month: plan.maxExportsPerMonth,
+    catalog_limit: plan.catalogLimit,
+    updated_at: new Date().toISOString()
+  };
+  try {
+    const { error } = await supabaseClient
+      .from('company_saas_entitlements')
+      .upsert(payload, { onConflict: 'company_id' });
+    if (error) throw error;
+    state.saasEntitlement = { ...(state.saasEntitlement || {}), ...payload };
+  } catch (error) {
+    console.warn('No se pudo sincronizar company_saas_entitlements; se usará billing_subscriptions/companies como fuente:', error.message || error);
+    state.saasEntitlement = state.saasEntitlement && normalizePlanKey(state.saasEntitlement.plan_id) === planId ? state.saasEntitlement : null;
+  }
+}
+
 async function saveBillingManual(form) {
   if (!requirePermission('billing_manage')) return;
   if (!can('users_manage')) {
@@ -6246,6 +6557,7 @@ async function saveBillingManual(form) {
     const { data: companyData, error: companyError } = await supabaseClient.from('companies').update(companyPayload).eq('id', state.company.id).select('*').single();
     if (companyError) throw companyError;
     state.company = normalizeCompany(companyData);
+    await syncSaasEntitlementFromBilling(planId, status, periodStart, periodEnd);
     await loadSaasEntitlement();
   } else {
     state.billing = { ...(state.billing || {}), ...payload, id: state.billing?.id || uid('billing') };
@@ -6411,6 +6723,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'void-invoice') await voidInvoice(id);
     if (action === 'invoice-pdf') generateInvoicePdf(id);
     if (action === 'copy-invoice-whatsapp') await copyInvoiceWhatsapp(id);
+    if (action === 'export-commercial-report-csv') await exportCommercialReportCsv();
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
   } catch (error) {
     console.error(error);

@@ -687,7 +687,7 @@ html[data-theme="black"] .badge.danger { background: rgba(153,27,27,.22); color:
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--soft-bg);
+  background: rgba(148,163,184,.08);
 }
 .billing-days strong {
   display: block;
@@ -709,7 +709,7 @@ html[data-theme="black"] .badge.danger { background: rgba(153,27,27,.22); color:
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 12px;
-  background: var(--soft-bg);
+  background: rgba(148,163,184,.08);
 }
 .billing-mini-grid span,
 .status-rules-grid span {
@@ -721,11 +721,34 @@ html[data-theme="black"] .badge.danger { background: rgba(153,27,27,.22); color:
 .badge.success { background: rgba(22, 163, 74, .12); color: #15803d; }
 .badge.warning { background: rgba(245, 158, 11, .15); color: #92400e; }
 .badge.danger { background: rgba(220, 38, 38, .12); color: #b91c1c; }
-.badge.muted { background: var(--soft-bg); color: var(--muted); }
+.badge.muted { background: rgba(148,163,184,.08); color: var(--muted); }
 [data-theme="black"] .badge.success { color: #86efac; }
 [data-theme="black"] .badge.warning { color: #fcd34d; }
 [data-theme="black"] .badge.danger { color: #fca5a5; }
 @media (max-width: 720px) {
   .billing-health-top { flex-direction: column; }
   .billing-days { width: 100%; text-align: left; }
+}
+
+/* Fase 10J/K */
+.feature-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.qa-plan-card .qa-steps {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(148,163,184,.08);
+}
+.qa-plan-card .qa-steps ol {
+  margin: 0;
+  padding-left: 18px;
+}
+.qa-plan-card .qa-steps li {
+  margin: 6px 0;
+  color: var(--muted);
 }

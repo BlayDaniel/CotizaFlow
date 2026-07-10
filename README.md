@@ -97,3 +97,23 @@ Entrega incremental segura. No refactoriza todo el sistema y conserva compatibil
 ## Corrección v2 SQL
 
 Se corrigió `schema_phase10hi_billing_subscription_status.sql` para usar `saas_plans.id` en lugar de `saas_plans.plan_id`, manteniendo compatibilidad con alias legacy como starter, pro, business y enterprise.
+
+## Fase 10JK v2 - Corrección Ganadero Pro
+
+Corrección aplicada después de detectar que al seleccionar Ganadero Pro algunas pantallas podían quedar bloqueadas o no renderizar correctamente.
+
+Ajustes:
+- El plan efectivo ahora toma prioridad desde `billing_subscriptions` y `companies` antes que la vista `company_saas_entitlements`, para evitar bloqueos por datos desfasados.
+- Se reforzó `canOperateGanadero()` para permitir Ganadero Pro y CRM Empresa cuando el tipo de negocio es Asociación Ganaderos y el rol tiene permisos.
+- Se agregó renderizado seguro de rutas para que Dashboard o Seguimiento no dejen la pantalla vacía si ocurre un error visual.
+- Al guardar el control manual de suscripción, la app intenta sincronizar entitlements si la base lo permite; si no, continúa usando `billing_subscriptions` y `companies` como fuente operativa.
+
+Prueba recomendada:
+1. En Configuración > Empresa, seleccionar Asociación Ganaderos.
+2. En Configuración > Planes y pagos, seleccionar Ganadero Pro y estado Activo.
+3. Guardar.
+4. Abrir Dashboard.
+5. Abrir Seguimiento.
+6. Abrir Control Diario.
+
+Resultado esperado: Dashboard ganadero, Seguimiento comercial y Control Diario deben abrir sin pantalla vacía ni bloqueo incorrecto.
