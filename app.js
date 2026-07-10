@@ -52,6 +52,26 @@ const FEATURE_DEFINITIONS = {
   crm_core: { label: 'CRM base' }, dashboard_basic: { label: 'Dashboard básico' }, dashboard_advanced: { label: 'Dashboard avanzado' }, clients: { label: 'Clientes' }, quotes: { label: 'Cotizaciones' }, quote_pdf: { label: 'PDF de cotización' }, follow_up: { label: 'Seguimiento' }, catalog: { label: 'Catálogo' }, invoices: { label: 'Facturas comerciales' }, partial_payments: { label: 'Pagos parciales', plan: 'CRM Pro' }, accounts_receivable: { label: 'Cuentas por cobrar', plan: 'CRM Pro' }, roles_basic: { label: 'Roles básicos' }, roles_advanced: { label: 'Roles avanzados', plan: 'CRM Pro' }, whatsapp_templates: { label: 'WhatsApp' }, exports_csv: { label: 'Exportación CSV', plan: 'CRM Pro' }, exports_pdf: { label: 'Exportación PDF' }, company_branding: { label: 'Logo y marca' }, multi_company: { label: 'Multiempresa', plan: 'CRM Empresa' }, referrals: { label: 'Referidos' }, ganadero_module: { label: 'Módulo ganadero', plan: 'Ganadero Pro' }, ganadero_daily_control: { label: 'Control diario ganadero', plan: 'Ganadero Pro' }, ganadero_monthly_summary: { label: 'Resumen mensual ganadero', plan: 'Ganadero Pro' }, ganadero_pdf: { label: 'PDF ganadero', plan: 'Ganadero Pro' }, ganadero_csv: { label: 'CSV ganadero', plan: 'Ganadero Pro' }, custom_reports: { label: 'Reportes personalizados', plan: 'CRM Empresa' }, integrations: { label: 'Integraciones', plan: 'CRM Empresa' }, billing_settings: { label: 'Planes y pagos' }
 };
 
+const PAGE_ACCESS_DEFINITIONS = {
+  dashboard: { label: 'Dashboard', routes: ['dashboard'] },
+  reports: { label: 'Seguimiento', routes: ['reports'] },
+  commercial_reports: { label: 'Reportes comerciales', routes: ['commercial-reports'] },
+  quotes: { label: 'Cotizaciones', routes: ['quotes','quote-new','quote-edit','quote-view'] },
+  invoices: { label: 'Facturas comerciales', routes: ['invoices','invoice-view'] },
+  clients: { label: 'Clientes / CRM', routes: ['clients'] },
+  catalog: { label: 'Catálogo', routes: ['catalog'] },
+  templates: { label: 'Plantillas', routes: ['templates'] },
+  milk: { label: 'Control Diario', routes: ['milk'] },
+  milk_settlements: { label: 'Liquidaciones ganaderas', routes: ['milk-settlements'] },
+  billing: { label: 'Planes y pagos', routes: ['billing'] },
+  settings: { label: 'Configuración empresa', routes: ['settings'] },
+  affiliates: { label: 'Referidos / afiliados', routes: ['affiliates'] },
+  integrations: { label: 'Integraciones', routes: ['integrations'] },
+  team: { label: 'Usuarios y roles', routes: ['team'] },
+  diagnostics: { label: 'Diagnóstico', routes: ['diagnostics'] },
+  plan_qa: { label: 'QA por planes', routes: ['plan-qa'] }
+};
+
 
 const ACTION_GATES = {
   client_create: { permission: 'clients_write', feature: 'clients', limitResource: 'clients', write: true, route: 'billing' },
@@ -138,6 +158,10 @@ let state = {
   productsServices: [],
   businessTemplates: [],
   teamMembers: [],
+  globalUserAccessRows: [],
+  diagnosticTargetRows: [],
+  diagnosticAuthUser: null,
+  platformOverride: null,
   currentMember: null,
   teamStorageMode: 'local',
   milkRecords: [],
@@ -214,6 +238,10 @@ const localDefaultState = {
   productsServices: [],
   businessTemplates: [],
   teamMembers: [],
+  globalUserAccessRows: [],
+  diagnosticTargetRows: [],
+  diagnosticAuthUser: null,
+  platformOverride: null,
   currentMember: null,
   teamStorageMode: 'local',
   milkRecords: [],
@@ -417,6 +445,57 @@ function memberFeatureOverride(member, featureKey) {
   return 'inherit';
 }
 
+function memberPageOverride(member, pageKey) {
+  const overrides = normalizeAccessOverride(member?.page_overrides);
+  if (overrides.deny.includes(pageKey)) return 'deny';
+  if (overrides.allow.includes(pageKey)) return 'allow';
+  return 'inherit';
+}
+
+function platformOverrideFor(kind, key) {
+  const access = state.platformOverride || {};
+  const source = kind === 'permission' ? access.permission_overrides : kind === 'feature' ? access.feature_overrides : access.page_overrides;
+  const overrides = normalizeAccessOverride(source);
+  if (overrides.deny.includes(key)) return 'deny';
+  if (overrides.allow.includes(key)) return 'allow';
+  return 'inherit';
+}
+
+function isCurrentUserGloballyInactive() {
+  if (isPlatformSuperuser()) return false;
+  return String(state.platformOverride?.status || 'active') !== 'active';
+}
+
+function allPageKeys() {
+  return Object.keys(PAGE_ACCESS_DEFINITIONS).sort();
+}
+
+function pageLabel(pageKey) {
+  return PAGE_ACCESS_DEFINITIONS[pageKey]?.label || pageKey;
+}
+
+function routeToPageKey(route = getRoute()) {
+  const clean = String(route || 'dashboard');
+  for (const [key, def] of Object.entries(PAGE_ACCESS_DEFINITIONS)) {
+    if ((def.routes || []).some(prefix => clean === prefix || clean.startsWith(prefix + '/'))) return key;
+  }
+  return clean === 'ganadero-upgrade' || clean === 'invoices-upgrade' ? clean : 'dashboard';
+}
+
+function canAccessPage(pageKey) {
+  if (!pageKey) return true;
+  if (isPlatformSuperuser()) return true;
+  if (isCurrentUserGloballyInactive()) return false;
+  const key = String(pageKey);
+  const globalOverride = platformOverrideFor('page', key);
+  if (globalOverride === 'deny') return false;
+  if (globalOverride === 'allow') return true;
+  const memberOverride = memberPageOverride(currentTeamMember(), key);
+  if (memberOverride === 'deny') return false;
+  if (memberOverride === 'allow') return true;
+  return true;
+}
+
 function allPermissionKeys() {
   const set = new Set();
   Object.values(ROLE_DEFINITIONS).forEach(role => (role.permissions || []).forEach(permission => {
@@ -440,6 +519,10 @@ function getEffectiveRole() {
 
 function can(permission) {
   if (permission === 'users_manage') return isPlatformSuperuser();
+  if (isCurrentUserGloballyInactive()) return false;
+  const globalOverride = platformOverrideFor('permission', permission);
+  if (globalOverride === 'deny') return false;
+  if (globalOverride === 'allow') return true;
   const member = currentTeamMember();
   const override = memberPermissionOverride(member, permission);
   if (override === 'deny') return false;
@@ -449,11 +532,11 @@ function can(permission) {
 }
 
 function firstSettingsRoute() {
-  if (can('settings_company')) return 'settings';
-  if (can('billing_manage')) return 'billing';
-  if (can('users_manage')) return 'team';
-  if (can('affiliates_manage')) return 'affiliates';
-  if (can('integrations_manage')) return 'integrations';
+  if (can('settings_company') && canAccessPage('settings')) return 'settings';
+  if (can('billing_manage') && canAccessPage('billing')) return 'billing';
+  if (can('users_manage') && canAccessPage('team')) return 'team';
+  if (can('affiliates_manage') && canAccessPage('affiliates')) return 'affiliates';
+  if (can('integrations_manage') && canAccessPage('integrations')) return 'integrations';
   return 'dashboard';
 }
 
@@ -463,11 +546,11 @@ function requirePermission(permission, message = 'Tu rol no tiene permiso para r
   return false;
 }
 
-function renderAccessDenied() {
+function renderAccessDenied(message = 'Tu usuario no tiene acceso a esta pantalla.') {
   return `
     <section class="card access-denied">
       <h1>Acceso restringido</h1>
-      <p>Tu rol actual es <strong>${escapeHtml(roleLabel(getEffectiveRoleKey()))}</strong>. No tienes permiso para abrir este módulo.</p>
+      <p>${escapeHtml(message)}</p><p class="help">Rol actual: <strong>${escapeHtml(roleLabel(getEffectiveRoleKey()))}</strong>.</p>
       <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
     </section>
   `;
@@ -870,6 +953,7 @@ async function loadRemoteData() {
     const company = await getOrCreateRemoteCompany();
     state.company = normalizeCompany(company);
     await loadTeamMembers();
+    await loadPlatformOverride();
     await claimPendingReferral(state.company.id);
     await seedDefaultTemplates(state.company.id);
 
@@ -1095,6 +1179,23 @@ async function loadTeamMembers() {
 }
 
 
+async function loadPlatformOverride() {
+  state.platformOverride = null;
+  if (mode !== 'supabase' || !supabaseClient || !state.session?.email) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from('platform_user_overrides')
+      .select('*')
+      .eq('email', normalizeEmail(state.session.email))
+      .maybeSingle();
+    if (error) throw error;
+    state.platformOverride = data || null;
+  } catch (error) {
+    console.warn('Overrides globales no disponibles. Ejecuta schema_phase10q_global_license_access.sql:', error.message || error);
+    state.platformOverride = null;
+  }
+}
+
 async function loadSaasEntitlement() {
   state.saasEntitlement = null;
   if (mode !== 'supabase' || !supabaseClient || !state.company?.id) return;
@@ -1313,7 +1414,11 @@ function planFeatureSet(planKey = getEffectivePlanKey()) {
 
 function canUseFeature(featureKey) {
   if (!featureKey) return true;
+  if (isCurrentUserGloballyInactive()) return false;
   const key = String(featureKey);
+  const globalOverride = platformOverrideFor('feature', key);
+  if (globalOverride === 'deny') return false;
+  if (globalOverride === 'allow') return true;
   const override = memberFeatureOverride(currentTeamMember(), key);
   if (override === 'deny') return false;
   if (override === 'allow') return true;
@@ -2192,16 +2297,16 @@ function renderApp(route) {
       <aside class="sidebar">
         <div class="brand"><span class="brand-mark">C</span> CotizaFlow</div>
         <nav>
-          ${navLink('dashboard', t('dashboard'))}
-          ${can('reports_read') ? navLink('reports', t('followup')) : ''}
-          ${can('reports_read') ? navLink(canUseFeature('accounts_receivable') ? 'commercial-reports' : 'commercial-reports', 'Reportes' + (canUseFeature('accounts_receivable') ? '' : ' 🔒')) : ''}
+          ${canAccessPage('dashboard') ? navLink('dashboard', t('dashboard')) : ''}
+          ${can('reports_read') && canAccessPage('reports') ? navLink('reports', t('followup')) : ''}
+          ${can('reports_read') && canAccessPage('commercial_reports') ? navLink(canUseFeature('accounts_receivable') ? 'commercial-reports' : 'commercial-reports', 'Reportes' + (canUseFeature('accounts_receivable') ? '' : ' 🔒')) : ''}
           ${renderMilkNavLink()}
           ${renderMilkSettlementNavLink()}
-          ${can('quotes_read') ? navLink('quotes', t('quotes')) : ''}
-          ${can('invoices_read') ? navLink(canUseFeature('invoices') ? 'invoices' : 'invoices-upgrade', t('invoices') + (canUseFeature('invoices') ? '' : ' 🔒')) : ''}
-          ${can('clients_read') ? navLink('clients', t('clients')) : ''}
-          ${can('catalog_read') ? navLink('catalog', t('catalog')) : ''}
-          ${can('templates_read') ? navLink('templates', t('templates')) : ''}
+          ${can('quotes_read') && canAccessPage('quotes') ? navLink('quotes', t('quotes')) : ''}
+          ${can('invoices_read') && canAccessPage('invoices') ? navLink(canUseFeature('invoices') ? 'invoices' : 'invoices-upgrade', t('invoices') + (canUseFeature('invoices') ? '' : ' 🔒')) : ''}
+          ${can('clients_read') && canAccessPage('clients') ? navLink('clients', t('clients')) : ''}
+          ${can('catalog_read') && canAccessPage('catalog') ? navLink('catalog', t('catalog')) : ''}
+          ${can('templates_read') && canAccessPage('templates') ? navLink('templates', t('templates')) : ''}
           ${can('settings_company') || can('billing_manage') || can('affiliates_manage') || can('integrations_manage') || can('users_manage') ? navLink(firstSettingsRoute(), t('settings')) : ''}
         </nav>
         <div class="sidebar-footer">
@@ -2222,14 +2327,14 @@ function navLink(route, label) {
 
 function renderMilkNavLink() {
   if (!isDairyBusiness()) return '';
-  if (!can('milk_read')) return '';
+  if (!can('milk_read') || !canAccessPage('milk')) return '';
   if (canOperateGanadero()) return navLink('milk', t('milkControl'));
   return navLink('ganadero-upgrade', `${t('milkControl')} 🔒`);
 }
 
 function renderMilkSettlementNavLink() {
   if (!isDairyBusiness()) return '';
-  if (!can('milk_read')) return '';
+  if (!can('milk_read') || !canAccessPage('milk_settlements')) return '';
   if (canOperateGanadero() && canUseFeature('ganadero_monthly_summary')) return navLink('milk-settlements', 'Liquidaciones');
   return navLink('ganadero-upgrade', 'Liquidaciones 🔒');
 }
@@ -2260,6 +2365,9 @@ function renderRoute(route) {
     if (!canUseFeature('invoices')) return renderFeatureLocked('invoices', 'Facturas comerciales no incluidas');
     return can('invoices_read') ? renderInvoiceView(route.split('/')[1]) : renderAccessDenied();
   }
+
+  const pageKey = routeToPageKey(route);
+  if (!canAccessPage(pageKey)) return renderAccessDenied('Esta pantalla fue desactivada para tu usuario.');
 
   const routePermissions = {
     quotes: 'quotes_read',
@@ -4457,7 +4565,7 @@ function renderConfigNav(active = 'settings') {
     ['diagnostics', 'Diagnóstico', 'QA interno, permisos, plan y módulos críticos', 'users_manage'],
     ['affiliates', t('affiliates'), 'Código, comisiones y enlace', 'affiliates_manage'],
     ['integrations', t('integrations'), 'Estado técnico y próximos conectores', 'integrations_manage']
-  ].filter(([, , , permission]) => can(permission));
+  ].filter(([route, , , permission]) => can(permission) && canAccessPage(route === 'billing' ? 'billing' : route));
   return `
     <section class="grid cols-4 config-grid config-nav-grid">
       ${cards.map(([route, title, subtitle]) => `
@@ -5864,35 +5972,61 @@ async function copyDiagnosticSummary() {
 }
 
 
+
+async function callPlatformAdminUsers(action, payload = {}) {
+  if (mode !== 'supabase' || !supabaseClient) throw new Error('Administración Auth requiere Supabase.');
+  const { data, error } = await supabaseClient.functions.invoke('platform-admin-users', {
+    body: { action, ...payload }
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data || {};
+}
+
 async function lookupDiagnosticUser(form) {
-  const fd = new FormData(form);
-  const email = normalizeEmail(fd.get('email'));
-  if (!email) { toast('Introduce un correo.'); return; }
+  if (!requirePermission('users_manage')) return;
+  const email = normalizeEmail(new FormData(form).get('email'));
   state.diagnosticTargetEmail = email;
-  if (mode === 'supabase' && supabaseClient && state.company?.id && isPlatformSuperuser()) {
+  state.diagnosticTargetRows = [];
+  state.diagnosticAuthUser = null;
+  state.diagnosticTargetMemberId = '';
+  if (!email) { render(); return; }
+  if (mode === 'supabase') {
     try {
-      const { data, error } = await supabaseClient
-        .from('company_members')
-        .select('*')
-        .eq('company_id', state.company.id)
-        .eq('email', email)
-        .maybeSingle();
-      if (error) throw error;
-      if (data && !(state.teamMembers || []).some(member => String(member.id) === String(data.id))) {
-        state.teamMembers = [...(state.teamMembers || []), data];
+      const result = await callPlatformAdminUsers('lookup', { email });
+      state.diagnosticTargetRows = result.rows || [];
+      state.diagnosticAuthUser = result.auth_user || null;
+      state.diagnosticTargetMemberId = state.diagnosticTargetRows[0]?.member_id || state.diagnosticTargetRows[0]?.id || '';
+    } catch (edgeError) {
+      console.warn('Edge Function platform-admin-users no disponible, usando RPC global:', edgeError.message || edgeError);
+      try {
+        const { data, error } = await supabaseClient.rpc('platform_lookup_user_access', { lookup_email: email });
+        if (error) throw error;
+        state.diagnosticTargetRows = data || [];
+        state.diagnosticTargetMemberId = state.diagnosticTargetRows[0]?.member_id || state.diagnosticTargetRows[0]?.id || '';
+        toast('Para buscar usuarios Auth sin empresa despliega la Edge Function platform-admin-users.');
+      } catch (error) {
+        console.warn('Búsqueda global no disponible, usando Roles actuales:', error.message || error);
+        const localRows = (state.teamMembers || []).filter(member => normalizeEmail(member.email) === email);
+        state.diagnosticTargetRows = localRows.map(member => ({ ...member, member_id: member.id, company_name: state.company?.name, company_plan: state.company?.plan, subscription_status: getRawBillingStatus() }));
+        toast('Ejecuta schema_phase10q_global_license_access.sql o despliega platform-admin-users.');
       }
-    } catch (error) {
-      console.warn('No se pudo consultar usuario por correo:', error.message || error);
     }
+  } else {
+    const localRows = (state.teamMembers || []).filter(member => normalizeEmail(member.email) === email);
+    state.diagnosticTargetRows = localRows.map(member => ({ ...member, member_id: member.id, company_name: state.company?.name, company_plan: state.company?.plan, subscription_status: getRawBillingStatus() }));
   }
   render();
 }
 
+
 function diagnosticTargetMember() {
-  const email = normalizeEmail(state.diagnosticTargetEmail || '');
-  if (!email) return null;
-  return (state.teamMembers || []).find(member => normalizeEmail(member.email) === email) || null;
+  const rows = state.diagnosticTargetRows || [];
+  const selectedId = state.diagnosticTargetMemberId || (rows[0]?.member_id || rows[0]?.id || '');
+  const row = rows.find(item => String(item.member_id || item.id) === String(selectedId)) || rows[0] || null;
+  return row ? { ...row, id: row.member_id || row.id } : null;
 }
+
 
 function rolePermissionsForMember(member) {
   let roleKey = normalizeRole(member?.role || 'lector');
@@ -5924,48 +6058,94 @@ function accessOverrideSelect(name, current = 'inherit') {
   </select>`;
 }
 
+function globalDiagnosticRows() {
+  return state.diagnosticTargetRows || [];
+}
+
+function globalOverrideValue(row, kind, key) {
+  const source = kind === 'permission' ? row?.permission_overrides : kind === 'feature' ? row?.feature_overrides : row?.page_overrides;
+  const overrides = normalizeAccessOverride(source);
+  if (overrides.deny.includes(key)) return 'deny';
+  if (overrides.allow.includes(key)) return 'allow';
+  return 'inherit';
+}
+
 function renderDiagnosticUserPanel() {
   const email = normalizeEmail(state.diagnosticTargetEmail || '');
-  const member = diagnosticTargetMember();
-  const permissions = member ? rolePermissionsForMember(member) : new Set();
-  const features = member ? featuresForMember(member) : new Set();
-  const isProtected = member && isPlatformSuperuserEmail(member.email);
+  const rows = globalDiagnosticRows();
+  const selectedId = state.diagnosticTargetMemberId || (rows[0]?.member_id || rows[0]?.id || '');
+  const row = rows.find(item => String(item.member_id || item.id) === String(selectedId)) || rows[0] || null;
+  const isAuthOnly = Boolean(row?.auth_only || String(row?.member_id || row?.id || '').startsWith('auth:'));
+  const authUser = state.diagnosticAuthUser || (row?.auth_user_id ? { id: row.auth_user_id, email: row.email, banned_until: row.status === 'inactive' ? 'inactive' : null } : null);
   const permissionKeys = allPermissionKeys();
   const featureKeys = Object.keys(FEATURE_DEFINITIONS).sort();
+  const pageKeys = allPageKeys();
+  const isProtected = email && isPlatformSuperuserEmail(email);
+  const permissions = row ? rolePermissionsForMember({ ...row, id: row.member_id || row.id }) : new Set();
+  const features = row ? featuresForMember({ ...row, id: row.member_id || row.id }) : new Set();
   return `
     <section class="card" style="margin-top:18px;">
-      <h2>Diagnóstico por usuario</h2>
-      <p class="help">Introduce un correo existente en Roles actuales para revisar su rol, estado, permisos y módulos. Solo ${escapeHtml(PLATFORM_SUPERUSER_EMAIL)} puede usar esta herramienta.</p>
+      <h2>Diagnóstico global por usuario</h2>
+      <p class="help">Introduce cualquier correo registrado en Supabase Auth o en cualquier empresa/licencia. Solo ${escapeHtml(PLATFORM_SUPERUSER_EMAIL)} puede buscar, activar, desactivar y limitar pantallas, módulos, permisos, roles y planes/pagos.</p>
       <form data-form="diagnostic-user-lookup" class="inline-form">
         <input name="email" type="email" value="${escapeHtml(email)}" placeholder="usuario@empresa.com" required />
-        <button class="btn primary" type="submit">Buscar usuario</button>
+        <button class="btn primary" type="submit">Buscar globalmente</button>
       </form>
-      ${email && !member ? `<div class="notice warning" style="margin-top:14px;">No se encontró ${escapeHtml(email)} en Roles actuales de esta empresa.</div>` : ''}
-      ${member ? `
+      ${email && !rows.length ? `<div class="notice warning" style="margin-top:14px;">No se encontró ${escapeHtml(email)}. Si el correo existe en Supabase Auth, verifica que la Edge Function <code>platform-admin-users</code> esté desplegada.</div>` : ''}
+      ${rows.length ? `
         <section class="grid cols-4" style="margin-top:18px;">
-          <div class="stat-card"><span>Correo</span><strong>${escapeHtml(member.email)}</strong><small>${escapeHtml(member.full_name || 'Sin nombre')}</small></div>
-          <div class="stat-card"><span>Rol</span><strong>${escapeHtml(roleLabel(member.role))}</strong><small>${escapeHtml(normalizeRole(member.role))}</small></div>
-          <div class="stat-card"><span>Estado</span><strong>${escapeHtml(member.status || 'active')}</strong><small>${isProtected ? 'Superusuario principal protegido' : 'Editable'}</small></div>
-          <div class="stat-card"><span>Permisos activos</span><strong>${permissions.size}</strong><small>Módulos activos: ${features.size}</small></div>
+          <div class="stat-card"><span>Correo</span><strong>${escapeHtml(email)}</strong><small>${isAuthOnly ? 'Cuenta Auth sin empresa asignada' : `${rows.length} empresa${rows.length === 1 ? '' : 's'} asociada${rows.length === 1 ? '' : 's'}`}</small></div>
+          <div class="stat-card"><span>Empresa seleccionada</span><strong>${escapeHtml(row?.company_name || 'Sin empresa')}</strong><small>${escapeHtml(row?.company_id || '')}</small></div>
+          <div class="stat-card"><span>Rol</span><strong>${escapeHtml(roleLabel(row?.role))}</strong><small>${escapeHtml(row?.status || 'active')}</small></div>
+          <div class="stat-card"><span>Plan</span><strong>${escapeHtml(PLAN_CATALOG[normalizePlanKey(row?.plan_id || row?.company_plan || 'demo')]?.name || 'Demo')}</strong><small>${escapeHtml(row?.subscription_status || row?.company_subscription_status || 'trial')}</small></div>
         </section>
         <form data-form="diagnostic-user-access" style="margin-top:18px;">
-          <input type="hidden" name="email" value="${escapeHtml(member.email)}" />
-          ${isProtected ? `<div class="notice info">El Superusuario principal no puede ser degradado, eliminado ni limitado desde esta pantalla.</div>` : `
-            <div class="grid cols-2">
+          <input type="hidden" name="email" value="${escapeHtml(email)}" />
+          <div class="field" style="max-width:620px;">
+            <label>Empresa / licencia o cuenta Auth seleccionada</label>
+            <select name="member_id" ${isProtected ? 'disabled' : ''}>
+              ${rows.map(item => {
+                const id = item.member_id || item.id;
+                return `<option value="${escapeHtml(id)}" ${String(id) === String(row?.member_id || row?.id) ? 'selected' : ''}>${escapeHtml(item.company_name || item.company_id || 'Cuenta Auth')} · ${item.auth_only ? 'Sin membresía' : escapeHtml(roleLabel(item.role))} · ${escapeHtml(item.status || 'active')}</option>`;
+              }).join('')}
+            </select>
+            <p class="help">La edición se aplica a la membresía seleccionada. Si es una cuenta Auth sin empresa, se guardan restricciones globales por correo para licenciamiento futuro.</p>
+          </div>
+          ${isProtected ? `<div class="notice info">El Superusuario principal no puede ser degradado, eliminado, desactivado ni limitado desde esta pantalla.</div>` : `
+            <section class="grid cols-3" style="margin-top:18px;">
+              <div class="field"><label>Rol</label><select name="role" ${isAuthOnly ? 'disabled' : ''}>${roleOptions(row?.role || 'ventas')}</select>${isAuthOnly ? '<p class="help">Sin membresía asignada. El rol se define al agregarlo a una empresa/licencia.</p>' : ''}</div>
+              <div class="field"><label>Estado</label><select name="status"><option value="active" ${String(row?.status || 'active') === 'active' ? 'selected' : ''}>Activo</option><option value="inactive" ${String(row?.status || 'active') !== 'active' ? 'selected' : ''}>Inactivo</option></select></div>
+              <div class="field"><label>Acceso rápido</label><select name="quick_mode"><option value="custom">Personalizado</option><option value="enable_all">Activar todo</option><option value="disable_all">Desactivar todo</option><option value="read_only">Solo lectura</option></select></div>
+            </section>
+            <div class="grid cols-3" style="margin-top:18px;">
               <div class="card soft-card">
-                <h3>Permisos por usuario</h3>
-                <div class="table-wrap compact-table"><table><thead><tr><th>Permiso</th><th>Estado efectivo</th><th>Override</th></tr></thead><tbody>
-                  ${permissionKeys.map(key => `<tr><td><code>${escapeHtml(key)}</code></td><td>${permissions.has(key) ? '<span class="badge success">Activo</span>' : '<span class="badge locked">Inactivo</span>'}</td><td>${accessOverrideSelect('perm:' + key, memberPermissionOverride(member, key))}</td></tr>`).join('')}
+                <h3>Pantallas del sistema</h3>
+                <p class="help">Controla si el usuario puede ver Dashboard, Seguimiento, Clientes, Cotizaciones, Planes y pagos, Diagnóstico, etc.</p>
+                <div class="table-wrap compact-table"><table><thead><tr><th>Pantalla</th><th>Override</th></tr></thead><tbody>
+                  ${pageKeys.map(key => `<tr><td>${escapeHtml(pageLabel(key))}<br><code>${escapeHtml(key)}</code></td><td>${accessOverrideSelect('page:' + key, globalOverrideValue(row, 'page', key))}</td></tr>`).join('')}
                 </tbody></table></div>
               </div>
               <div class="card soft-card">
-                <h3>Módulos por usuario</h3>
+                <h3>Módulos / feature flags</h3>
                 <div class="table-wrap compact-table"><table><thead><tr><th>Módulo</th><th>Estado efectivo</th><th>Override</th></tr></thead><tbody>
-                  ${featureKeys.map(key => `<tr><td>${escapeHtml(FEATURE_DEFINITIONS[key]?.label || key)}<br><code>${escapeHtml(key)}</code></td><td>${features.has(key) ? '<span class="badge success">Activo</span>' : '<span class="badge locked">Inactivo</span>'}</td><td>${accessOverrideSelect('feature:' + key, memberFeatureOverride(member, key))}</td></tr>`).join('')}
+                  ${featureKeys.map(key => `<tr><td>${escapeHtml(FEATURE_DEFINITIONS[key]?.label || key)}<br><code>${escapeHtml(key)}</code></td><td>${features.has(key) ? '<span class="badge success">Activo</span>' : '<span class="badge locked">Inactivo</span>'}</td><td>${accessOverrideSelect('feature:' + key, globalOverrideValue(row, 'feature', key))}</td></tr>`).join('')}
+                </tbody></table></div>
+              </div>
+              <div class="card soft-card">
+                <h3>Permisos operativos</h3>
+                <div class="table-wrap compact-table"><table><thead><tr><th>Permiso</th><th>Estado efectivo</th><th>Override</th></tr></thead><tbody>
+                  ${permissionKeys.map(key => `<tr><td><code>${escapeHtml(key)}</code></td><td>${permissions.has(key) ? '<span class="badge success">Activo</span>' : '<span class="badge locked">Inactivo</span>'}</td><td>${accessOverrideSelect('perm:' + key, globalOverrideValue(row, 'permission', key))}</td></tr>`).join('')}
                 </tbody></table></div>
               </div>
             </div>
-            <div class="form-actions" style="margin-top:14px;"><button class="btn primary" type="submit">Guardar permisos y módulos</button></div>
+            <div class="form-actions" style="margin-top:14px;">
+              <button class="btn primary" type="submit">Guardar acceso global</button>
+              <button class="btn warning" type="button" data-action="deactivate-global-user" data-id="${escapeHtml(row?.member_id || row?.id || '')}">Desactivar esta membresía</button>
+              <button class="btn secondary" type="button" data-action="activate-global-user" data-id="${escapeHtml(row?.member_id || row?.id || '')}">Activar esta membresía</button>
+              <button class="btn warning" type="button" data-action="disable-auth-user" data-email="${escapeHtml(email)}">Desactivar login Auth</button>
+              <button class="btn secondary" type="button" data-action="enable-auth-user" data-email="${escapeHtml(email)}">Activar login Auth</button>
+              <button class="btn ghost" type="button" data-action="send-auth-recovery" data-email="${escapeHtml(email)}">Enviar recuperación</button>
+            </div>
           `}
         </form>
       ` : ''}
@@ -5977,27 +6157,128 @@ async function saveDiagnosticUserAccess(form) {
   if (!requirePermission('users_manage')) return;
   const fd = new FormData(form);
   const email = normalizeEmail(fd.get('email'));
-  const member = (state.teamMembers || []).find(item => normalizeEmail(item.email) === email);
-  if (!member) { toast('Usuario no encontrado.'); return; }
-  if (isPlatformSuperuserEmail(member.email)) { toast('El Superusuario principal no puede ser limitado.'); return; }
+  const memberId = String(fd.get('member_id') || state.diagnosticTargetMemberId || '');
+  const row = (state.diagnosticTargetRows || []).find(item => String(item.member_id || item.id) === memberId);
+  if (!row) { toast('Membresía no encontrada.'); return; }
+  if (isPlatformSuperuserEmail(email)) { toast('El Superusuario principal no puede ser limitado.'); return; }
+
   const permissionOverrides = { allow: [], deny: [] };
   const featureOverrides = { allow: [], deny: [] };
+  const pageOverrides = { allow: [], deny: [] };
   for (const [key, value] of fd.entries()) {
     if (key.startsWith('perm:') && ['allow','deny'].includes(String(value))) permissionOverrides[String(value)].push(key.slice(5));
     if (key.startsWith('feature:') && ['allow','deny'].includes(String(value))) featureOverrides[String(value)].push(key.slice(8));
+    if (key.startsWith('page:') && ['allow','deny'].includes(String(value))) pageOverrides[String(value)].push(key.slice(5));
   }
-  const patch = { permission_overrides: permissionOverrides, feature_overrides: featureOverrides, updated_at: new Date().toISOString() };
+
+  const quickMode = String(fd.get('quick_mode') || 'custom');
+  if (quickMode === 'enable_all') {
+    pageOverrides.allow = allPageKeys(); pageOverrides.deny = [];
+    featureOverrides.allow = Object.keys(FEATURE_DEFINITIONS); featureOverrides.deny = [];
+    permissionOverrides.allow = allPermissionKeys(); permissionOverrides.deny = [];
+  }
+  if (quickMode === 'disable_all') {
+    pageOverrides.deny = allPageKeys(); pageOverrides.allow = [];
+    featureOverrides.deny = Object.keys(FEATURE_DEFINITIONS); featureOverrides.allow = [];
+    permissionOverrides.deny = allPermissionKeys(); permissionOverrides.allow = [];
+  }
+  if (quickMode === 'read_only') {
+    const writePerms = allPermissionKeys().filter(key => /_write|_delete|_void|_payments|manage|settings|billing/.test(key));
+    permissionOverrides.deny = [...new Set([...permissionOverrides.deny, ...writePerms])];
+    pageOverrides.allow = [...new Set([...pageOverrides.allow, 'dashboard','reports','commercial_reports','quotes','invoices','clients','catalog'])];
+  }
+
+  const role = normalizeRole(fd.get('role') || row.role || 'lector');
+  const status = ['active','inactive'].includes(String(fd.get('status') || 'active')) ? String(fd.get('status') || 'active') : 'active';
+  const patch = { role: role === 'superuser' ? 'admin' : role, status, permission_overrides: permissionOverrides, feature_overrides: featureOverrides, page_overrides: pageOverrides, updated_at: new Date().toISOString() };
+
   if (mode === 'supabase') {
-    const { error } = await supabaseClient.from('company_members').update(patch).eq('id', member.id);
-    if (error) throw error;
-    await loadTeamMembers();
+    const isAuthOnly = Boolean(row.auth_only || memberId.startsWith('auth:'));
+    if (isAuthOnly) {
+      const result = await callPlatformAdminUsers('update-global-access', { email, patch });
+      state.diagnosticTargetRows = result.rows || [];
+      state.diagnosticAuthUser = result.auth_user || null;
+    } else {
+      const { error } = await supabaseClient.rpc('platform_update_user_access', { target_member_id: memberId, patch });
+      if (error) throw error;
+      const refreshedResult = await callPlatformAdminUsers('lookup', { email }).catch(async () => {
+        const { data, error: refreshError } = await supabaseClient.rpc('platform_lookup_user_access', { lookup_email: email });
+        if (refreshError) throw refreshError;
+        return { rows: data || [], auth_user: null };
+      });
+      state.diagnosticTargetRows = refreshedResult.rows || [];
+      state.diagnosticAuthUser = refreshedResult.auth_user || null;
+    }
   } else {
-    Object.assign(member, patch);
+    const member = (state.teamMembers || []).find(item => String(item.id) === memberId);
+    if (member) Object.assign(member, patch);
+    saveLocalState();
+    state.diagnosticTargetRows = (state.teamMembers || []).filter(item => normalizeEmail(item.email) === email).map(member => ({ ...member, member_id: member.id, company_name: state.company?.name }));
+  }
+  if (email === normalizeEmail(state.session?.email)) await loadPlatformOverride();
+  state.diagnosticTargetEmail = email;
+  state.diagnosticTargetMemberId = memberId;
+  toast('Acceso global actualizado.');
+  render();
+}
+
+async function setGlobalUserStatus(memberId, status) {
+  if (!requirePermission('users_manage')) return;
+  const row = (state.diagnosticTargetRows || []).find(item => String(item.member_id || item.id) === String(memberId));
+  if (!row) return;
+  if (isPlatformSuperuserEmail(row.email)) { toast('No puedes modificar el Superusuario principal.'); return; }
+  if (mode === 'supabase') {
+    const email = normalizeEmail(row.email || state.diagnosticTargetEmail);
+    if (String(memberId).startsWith('auth:') || row.auth_only) {
+      const result = await callPlatformAdminUsers('update-global-access', { email, patch: { status, updated_at: new Date().toISOString() } });
+      state.diagnosticTargetRows = result.rows || [];
+      state.diagnosticAuthUser = result.auth_user || null;
+    } else {
+      const { error } = await supabaseClient.rpc('platform_update_user_access', { target_member_id: String(memberId), patch: { status, updated_at: new Date().toISOString() } });
+      if (error) throw error;
+      const refreshedResult = await callPlatformAdminUsers('lookup', { email }).catch(async () => {
+        const { data, error: refreshError } = await supabaseClient.rpc('platform_lookup_user_access', { lookup_email: email });
+        if (refreshError) throw refreshError;
+        return { rows: data || [], auth_user: null };
+      });
+      state.diagnosticTargetRows = refreshedResult.rows || [];
+      state.diagnosticAuthUser = refreshedResult.auth_user || null;
+    }
+    state.diagnosticTargetEmail = email;
+  } else {
+    const member = (state.teamMembers || []).find(item => String(item.id) === String(memberId));
+    if (member) member.status = status;
     saveLocalState();
   }
-  state.diagnosticTargetEmail = email;
-  toast('Permisos y módulos actualizados.');
+  toast(status === 'active' ? 'Usuario activado.' : 'Usuario desactivado.');
   render();
+}
+
+
+
+async function setAuthUserLoginStatus(email, enabled) {
+  if (!requirePermission('users_manage')) return;
+  const targetEmail = normalizeEmail(email || state.diagnosticTargetEmail);
+  if (!targetEmail) { toast('Correo requerido.'); return; }
+  if (isPlatformSuperuserEmail(targetEmail)) { toast('No puedes modificar el Superusuario principal.'); return; }
+  if (mode !== 'supabase') { toast('Esta acción requiere Supabase Auth.'); return; }
+  const result = await callPlatformAdminUsers(enabled ? 'enable-auth-user' : 'disable-auth-user', { email: targetEmail });
+  state.diagnosticTargetEmail = targetEmail;
+  state.diagnosticTargetRows = result.rows || [];
+  state.diagnosticAuthUser = result.auth_user || null;
+  state.diagnosticTargetMemberId = state.diagnosticTargetRows[0]?.member_id || state.diagnosticTargetRows[0]?.id || '';
+  toast(enabled ? 'Login Auth activado.' : 'Login Auth desactivado.');
+  render();
+}
+
+async function sendAuthRecoveryFromDiagnostics(email) {
+  if (!requirePermission('users_manage')) return;
+  const targetEmail = normalizeEmail(email || state.diagnosticTargetEmail);
+  if (!targetEmail) { toast('Correo requerido.'); return; }
+  if (mode !== 'supabase') { toast('Esta acción requiere Supabase Auth.'); return; }
+  const redirectTo = `${location.origin}${location.pathname}`;
+  await callPlatformAdminUsers('send-recovery', { email: targetEmail, redirect_to: redirectTo });
+  toast('Solicitud de recuperación enviada/generada desde Supabase Auth.');
 }
 
 function renderDiagnostics() {
@@ -6014,7 +6295,8 @@ function renderDiagnostics() {
     'schema_phase10g_ganadero_premium.sql',
     'schema_phase10hi_billing_subscription_status.sql',
     'schema_phase10m_referrals_affiliates.sql',
-    'schema_phase10n_secure_public_links.sql'
+    'schema_phase10n_secure_public_links.sql',
+    'schema_phase10r_auth_admin_global.sql'
   ];
   return `
     <div class="page-header">
@@ -6086,7 +6368,7 @@ function renderDiagnostics() {
         <div class="table-wrap"><table><tbody>
           ${diagnosticRow('Links públicos', diagnosticBadge(typeof createPublicQuoteLink === 'function'), 'Cotizaciones públicas por token')}
           ${diagnosticRow('Vista pública', diagnosticBadge(true), 'public.html?t=TOKEN')}
-          ${diagnosticRow('Edge Functions', diagnosticBadge(Boolean(config.supabaseUrl), true), 'create-public-quote-link, get-public-quote, quote-public-action')}
+          ${diagnosticRow('Edge Functions', diagnosticBadge(Boolean(config.supabaseUrl), true), 'create-public-quote-link, get-public-quote, quote-public-action, platform-admin-users')}
         </tbody></table></div>
       </div>
     </section>
@@ -7567,6 +7849,11 @@ app.addEventListener('click', async (event) => {
     if (action === 'export-commercial-report-csv') await exportCommercialReportCsv();
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
     if (action === 'copy-diagnostic-summary') await copyDiagnosticSummary();
+    if (action === 'deactivate-global-user') await setGlobalUserStatus(target.dataset.id, 'inactive');
+    if (action === 'activate-global-user') await setGlobalUserStatus(target.dataset.id, 'active');
+    if (action === 'disable-auth-user') await setAuthUserLoginStatus(target.dataset.email, false);
+    if (action === 'enable-auth-user') await setAuthUserLoginStatus(target.dataset.email, true);
+    if (action === 'send-auth-recovery') await sendAuthRecoveryFromDiagnostics(target.dataset.email);
   } catch (error) {
     console.error(error);
     toast(error.message || 'Ocurrió un error.');

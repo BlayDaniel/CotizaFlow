@@ -334,3 +334,71 @@ SQL nuevo:
 `supabase/schema_phase10p_platform_superuser_user_access.sql`
 
 Ejecutar después de las fases anteriores. El SQL no borra datos operativos. Agrega columnas de overrides a `company_members`, crea funciones de superusuario de plataforma y endurece las políticas RLS para que solo `juan.dmzjob@gmail.com` administre usuarios y roles.
+
+## Fase 10Q — Administración global de usuarios y licenciamiento
+
+Esta fase amplía Diagnóstico para que el superusuario principal `juan.dmzjob@gmail.com` pueda buscar usuarios por correo a nivel global, no solo dentro de la empresa activa.
+
+Incluye:
+
+- Búsqueda global por correo en todas las membresías registradas en `company_members`.
+- Control de rol por empresa/licencia seleccionada.
+- Activar o desactivar membresía del usuario.
+- Control de pantallas completas: Dashboard, Seguimiento, Reportes, Cotizaciones, Facturas comerciales, Clientes, Catálogo, Plantillas, Control Diario, Liquidaciones, Configuración, Planes y pagos, Referidos, Integraciones, Usuarios y roles, Diagnóstico y QA por planes.
+- Control de módulos/feature flags.
+- Control de permisos operativos.
+- Modo rápido: Activar todo, Desactivar todo o Solo lectura.
+- Tabla `platform_user_overrides` para overrides globales por correo.
+- Protección reforzada: solo `juan.dmzjob@gmail.com` puede ser Superusuario.
+
+SQL nuevo:
+
+`supabase/schema_phase10q_global_license_access.sql`
+
+Ejecutar después de Fase 10P.
+
+Nota técnica: desde frontend estático no se puede listar usuarios puros de Supabase Auth que todavía no pertenezcan a ninguna empresa. Esta fase cubre usuarios/membresías globales del sistema. Para controlar cuentas Auth sin empresa se debe agregar una Edge Function administrativa futura con `service_role` guardado solo en backend.
+
+## Fase 10R - Administración global Auth segura
+
+Esta fase agrega administración global de usuarios registrados en Supabase Auth mediante Edge Function segura.
+
+Objetivo:
+- Buscar cualquier usuario por correo, aunque todavía no esté asociado a una empresa/licencia.
+- Mantener a `juan.dmzjob@gmail.com` como único Superusuario principal.
+- Activar o desactivar el login Auth de un usuario desde Diagnóstico.
+- Guardar restricciones globales por correo para pantallas, módulos y permisos.
+- Preparar licenciamiento futuro para empresas que adquieran el sistema por instalación/licencia y no directamente desde el flujo SaaS.
+
+Archivos agregados:
+
+```text
+supabase/schema_phase10r_auth_admin_global.sql
+supabase/functions/platform-admin-users/index.ts
+```
+
+Orden recomendado:
+
+1. Ejecutar `supabase/schema_phase10q_global_license_access.sql` si no se ha ejecutado.
+2. Ejecutar `supabase/schema_phase10r_auth_admin_global.sql`.
+3. Desplegar Edge Function:
+
+```bash
+supabase functions deploy platform-admin-users
+```
+
+La función usa `SUPABASE_SERVICE_ROLE_KEY` desde el entorno seguro de Supabase Edge Functions. Esa llave no debe colocarse en `config.js`, `app.js` ni GitHub Pages.
+
+Uso:
+
+1. Entrar con `juan.dmzjob@gmail.com`.
+2. Ir a Configuración > Diagnóstico.
+3. Introducir el correo del usuario.
+4. Si existe en `company_members`, se verán sus empresas/licencias.
+5. Si existe solo en Supabase Auth, aparecerá como “Usuario Auth sin empresa asignada”.
+6. Desde ahí se pueden guardar restricciones globales, activar/desactivar login Auth o enviar recuperación.
+
+Notas:
+- El Superusuario principal no puede ser desactivado, degradado ni limitado desde la interfaz.
+- El botón “Desactivar login Auth” bloquea el acceso del usuario a Supabase Auth.
+- Los overrides globales se aplican por correo y afectan pantallas, módulos y permisos cuando ese usuario inicia sesión.
