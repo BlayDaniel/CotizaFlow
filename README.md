@@ -1,160 +1,328 @@
-# CotizaFlow - Fase 10T
+# CotizaFlow Demo Stable v1.0
 
-Corrección incremental enfocada en dos puntos detectados por QA:
+**CotizaFlow Demo Stable v1.0** es la versión estable aprobada para **demo comercial** y **piloto asistido**.
 
-1. Edge Function administrativa `platform-admin-users`.
-2. Responsive móvil / overflow horizontal.
+Esta versión no debe tratarse todavía como un SaaS autoservicio abierto. Está preparada para demostraciones, pruebas comerciales controladas, implementación asistida y primeros pilotos con clientes reales.
 
-## Cambios principales
+---
 
-- `platform-admin-users` ahora busca usuarios globales por correo usando consultas directas con `service_role`, sin depender primero del RPC `platform_lookup_user_access`.
-- Mantiene RPC solo como respaldo.
-- Agrega acción `health` para probar la Edge Function desde Diagnóstico.
-- Mejora errores de frontend al invocar la Edge Function.
-- Diagnóstico ahora tiene botón **Probar** para `platform-admin-users`.
-- Se refuerza CSS móvil para evitar desbordamiento global en 390px.
-- Se mantiene el fallback de copiar diagnóstico.
-- Se agrega SQL incremental `schema_phase10t_edge_mobile_hardening.sql`.
+## Estado de la versión
 
-## Actualización
+**Versión:** CotizaFlow Demo Stable v1.0  
+**Estado:** Aprobada con observaciones para demo comercial y piloto asistido  
+**Modo principal:** GitHub Pages + Supabase  
+**Superusuario principal:**
+**Backend activo:** Supabase Auth, Supabase PostgreSQL, RLS y Edge Functions  
+**Edge Function administrativa:** `platform-admin-users` validada en diagnóstico  
 
-Conserva tu `config.js` real y reemplaza:
+---
 
-- `app.js`
-- `styles.css`
-- `README.md`
+## Objetivo del sistema
 
-Agrega o actualiza:
+CotizaFlow es un CRM SaaS sencillo para pequeños negocios de servicios que necesitan controlar clientes, seguimiento, cotizaciones, facturas comerciales internas, pagos, cuentas por cobrar y reportes.
 
-- `supabase/schema_phase10t_edge_mobile_hardening.sql`
-- `supabase/functions/platform-admin-users/index.ts`
-- `supabase/functions/_shared/cors.ts`
+También incluye un módulo vertical premium para **Asociaciones Ganaderas**, orientado a controlar entregas diarias de leche, productores, comisiones y liquidaciones mensuales.
 
-Ejecuta en Supabase SQL Editor:
+---
 
-```sql
--- contenido completo de supabase/schema_phase10t_edge_mobile_hardening.sql
+## Alcance funcional de Demo Stable v1.0
+
+### Acceso y seguridad
+
+- Login con Supabase Auth.
+- Recuperación de acceso mediante Supabase.
+- Sesión estable en navegador.
+- Superusuario principal protegido.
+- Administración global mediante diagnóstico y Edge Function segura.
+- Roles operativos dentro del sistema.
+- Control de permisos por usuario, rol, plan y módulo.
+
+### CRM
+
+- Gestión de clientes.
+- Historial básico por cliente.
+- Relación de clientes con cotizaciones, facturas y entregas ganaderas cuando aplica.
+- Seguimiento comercial.
+
+### Cotizaciones
+
+- Crear cotizaciones.
+- Editar cotizaciones.
+- Agregar ítems manuales o desde catálogo.
+- Estados de cotización.
+- PDF de cotización.
+- Mensaje listo para WhatsApp.
+- Links públicos seguros para cotizaciones.
+
+### Facturas comerciales internas
+
+- Crear facturas comerciales.
+- Convertir cotizaciones en facturas.
+- Emitir factura comercial interna.
+- Registrar pagos parciales o completos.
+- Controlar saldo pendiente.
+- PDF de factura comercial interna.
+- Cuentas por cobrar.
+
+> Nota: esta versión **no emite comprobantes fiscales oficiales NCF/e-CF**. El módulo de facturas es comercial/interno. La integración fiscal queda fuera de esta versión estable.
+
+### Reportes
+
+- Reportes comerciales.
+- Cotizado.
+- Facturado.
+- Cobrado.
+- Cuentas por cobrar.
+- Facturas vencidas.
+- Mayores saldos por cliente.
+- Exportaciones según permisos del plan.
+
+### Catálogo y plantillas
+
+- Catálogo de productos y servicios.
+- Plantillas comerciales.
+- Plantilla especializada para Asociación Ganaderos.
+
+### Módulo Asociación Ganaderos
+
+Disponible cuando el tipo de negocio y el plan lo permiten.
+
+Incluye:
+
+- Control Diario.
+- Registro de entregas de leche.
+- Productores conectados al CRM.
+- Precio por litro configurable.
+- Comisión de asociación configurable.
+- Cálculo de bruto, comisión y neto.
+- Resumen mensual.
+- PDF y CSV según permisos.
+- Liquidaciones mensuales por productor.
+- Descuento de facturas pendientes contra el neto a pagar.
+
+### Planes y permisos
+
+Planes visibles:
+
+- Demo.
+- CRM Básico.
+- CRM Pro.
+- Ganadero Pro.
+- CRM Empresa.
+
+Estados de suscripción:
+
+- `trial`
+- `active`
+- `past_due`
+- `suspended`
+- `cancelled`
+
+Roles incluidos:
+
+- Superusuario.
+- Administrador.
+- Ventas.
+- Operador diario.
+- Contabilidad.
+- Solo lectura.
+
+### Diagnóstico
+
+La pantalla de diagnóstico permite revisar:
+
+- Modo de conexión.
+- Sesión activa.
+- Empresa activa.
+- Plan efectivo.
+- Estado de suscripción.
+- Límites de uso.
+- Acceso por módulo.
+- Estado de helpers críticos.
+- Estado de Edge Functions.
+- Búsqueda global por correo.
+- Permisos y módulos por usuario.
+
+---
+
+## Arquitectura
+
+### Frontend
+
+- HTML.
+- CSS.
+- JavaScript.
+- GitHub Pages.
+- Frontend estático.
+
+### Backend
+
+- Supabase Auth.
+- Supabase PostgreSQL.
+- Row Level Security.
+- Supabase JS Client.
+- Supabase Edge Functions.
+
+### Edge Functions activas
+
+- `platform-admin-users`
+- Funciones públicas de cotización, si están desplegadas en el entorno.
+
+### Seguridad
+
+- No usar `service_role` en frontend.
+- No guardar llaves secretas en `app.js`, `config.js` ni GitHub Pages.
+- La llave pública/publishable puede estar en frontend si RLS está configurado correctamente.
+- Las operaciones administrativas globales deben pasar por Edge Functions.
+
+---
+
+## Archivos principales
+
+```text
+index.html
+app.js
+styles.css
+public.html
+config.js
+config.example.js
+README.md
+supabase/
+  functions/
+    platform-admin-users/
+      index.ts
+    _shared/
+      cors.ts
+  config.toml
 ```
 
-Luego despliega la Edge Function:
+---
+
+## Configuración requerida
+
+### `config.js`
+
+El archivo `config.js` debe existir en producción y contener la configuración pública de Supabase:
+
+```js
+window.COTIZAFLOW_CONFIG = {
+  supabaseUrl: 'https://TU-PROYECTO.supabase.co',
+  supabaseAnonKey: 'TU_PUBLISHABLE_KEY',
+  appName: 'CotizaFlow'
+};
+```
+
+No colocar llaves secretas en este archivo.
+
+---
+
+## Supabase Edge Function administrativa
+
+La función administrativa validada para esta versión es:
+
+```text
+platform-admin-users
+```
+
+Comando recomendado para despliegue:
 
 ```bash
-supabase functions deploy platform-admin-users
+supabase functions deploy platform-admin-users --no-verify-jwt --project-ref TU_PROJECT_REF
 ```
 
-## Prueba corta
+La función debe responder correctamente desde:
 
-1. Abre la web y presiona `Ctrl + F5`.
-2. Entra como `juan.dmzjob@gmail.com`.
-3. Ve a **Configuración > Diagnóstico**.
-4. En Backend seguro, presiona **Probar** en `platform-admin-users`.
-5. Debe mostrar un toast de OK.
-6. Busca un correo global.
-7. Prueba móvil en 390 x 844 y confirma que no haya overflow global.
-
-## Verificaciones hechas
-
-- `node --check app.js`: correcto.
-- Helpers críticos revisados: correcto.
-- Edge Function reescrita para reducir dependencia de RPC y exponer errores JSON claros.
-- SQL incremental, sin eliminación de datos operativos.
-
-
-## Fase 10U — Edge Function administrativa y layout estable
-
-Correcciones incluidas:
-
-- La Edge Function `platform-admin-users` ya no devuelve HTTP 400 para errores manejados. Devuelve JSON controlado para que el diagnóstico muestre el detalle exacto.
-- La función busca usuarios Auth con `service_role` y usa RPC solo como respaldo para membresías.
-- Se agregó soporte de secrets alternativos: `SUPABASE_SERVICE_ROLE_KEY`, `SERVICE_ROLE_KEY` o `SUPABASE_SERVICE_KEY`. El recomendado sigue siendo `SUPABASE_SERVICE_ROLE_KEY`.
-- Se redujo el CSS agresivo que podía romper el layout de escritorio. El comportamiento móvil queda limitado a breakpoints móviles.
-- Se mantiene scroll interno en tablas para evitar overflow global.
-
-Archivos a reemplazar:
-
-- `app.js`
-- `styles.css`
-- `README.md`
-- `supabase/functions/platform-admin-users/index.ts`
-- `supabase/functions/_shared/cors.ts`
-
-SQL a ejecutar:
-
-- `supabase/schema_phase10u_edge_mobile_layout.sql`
-
-Después despliega de nuevo:
-
-```bash
-supabase functions deploy platform-admin-users
+```text
+Configuración > Diagnóstico > Backend seguro > Probar
 ```
 
-Verifica en Supabase Edge Functions > Secrets que exista `SUPABASE_SERVICE_ROLE_KEY`.
+Resultado esperado:
 
-## Fase 10V - Corrección Edge Function y layout estable
-
-Esta versión corrige dos problemas detectados después de 10T/10U:
-
-1. El diseño de escritorio no debe romper la columna derecha. Se removieron reglas CSS agresivas de ancho/overflow y se limitaron los ajustes fuertes a mobile.
-2. `platform-admin-users` debe responder con JSON controlado. Se agregó `supabase/config.toml` con `verify_jwt = false` para que la función haga su propia validación interna del usuario autenticado y no sea bloqueada antes de ejecutar el código.
-
-Pasos:
-
-1. Reemplazar `app.js`, `styles.css` y `README.md`.
-2. Subir/actualizar:
-   - `supabase/functions/platform-admin-users/index.ts`
-   - `supabase/functions/_shared/cors.ts`
-   - `supabase/config.toml`
-3. Ejecutar en SQL Editor:
-   - `supabase/schema_phase10u_edge_mobile_layout.sql`
-4. Desplegar:
-
-```bash
-supabase functions deploy platform-admin-users
+```text
+platform-admin-users OK: fase10z-no-audit-2026-07-10
 ```
 
-Luego probar en Configuración > Diagnóstico > Backend seguro > Probar.
+En esta versión, la auditoría interna de esta función queda desactivada temporalmente para mantener estabilidad durante demo y QA. Puede reactivarse en una versión posterior.
 
-## Fase 10W - Corrección estable de layout y Edge Function administrativa
+---
 
-Esta versión estabiliza dos puntos específicos:
+## Estado QA de Demo Stable v1.0
 
-1. Sidebar y layout desktop/móvil.
-   - El sidebar conserva fondo completo en escritorio aunque el contenido haga scroll.
-   - El diagnóstico recupera tarjetas de resumen y listas de uso con estilos propios.
-   - Mobile mantiene tablas con scroll interno sin desbordar el documento.
+Resultado QA actualizado:
 
-2. platform-admin-users.
-   - El frontend ahora llama la función con `fetch` directo para obtener el error real si Supabase devuelve estado no-2xx.
-   - Se mantiene `supabase/config.toml` con `verify_jwt = false` para esta función.
-   - La función valida internamente que el usuario sea `juan.dmzjob@gmail.com`.
+- Sesión administrativa recuperada correctamente.
+- Dashboard y módulos principales cargan sin pantallas blancas.
+- `platform-admin-users` responde OK.
+- Búsqueda global muestra empresa, rol, estado, plan y permisos.
+- Estado normalizado como `trial`; no aparece `trialing`.
+- Copiar diagnóstico funciona.
+- Sin errores activos de CotizaFlow en consola durante el recorrido actual.
+- Móvil 390 × 844 sin overflow global en módulos principales probados.
+- Facturas identificadas como comerciales internas y no fiscales.
+- Superusuario confirmado:.
+- Modo Supabase conectado.
+- Cálculos comerciales y ganaderos coherentes.
 
-Despliegue recomendado:
+---
 
-```bat
-supabase functions deploy platform-admin-users --no-verify-jwt
+## Observaciones conocidas
+
+- Control Diario puede aparecer varias veces como texto dentro de Clientes, lo que puede causar ambigüedad para pruebas automatizadas basadas solo en texto visible.
+- Las pruebas destructivas no deben ejecutarse sobre usuarios reales.
+- Las pruebas completas por rol requieren cuentas QA independientes.
+- La venta autoservicio completa requiere una fase posterior de pagos, webhooks, onboarding y automatización.
+
+---
+
+## Uso recomendado de esta versión
+
+Esta versión puede usarse para:
+
+- Demo comercial.
+- Piloto asistido.
+- Presentación a clientes potenciales.
+- Validación con negocios reales.
+- Implementación manual controlada.
+
+No se recomienda todavía para:
+
+- Autoservicio público masivo.
+- Venta sin acompañamiento.
+- Facturación fiscal oficial.
+- Pagos automáticos sin validación adicional.
+
+---
+
+## Próximas fases sugeridas
+
+1. Crear tenant QA aislado.
+2. Crear usuarios QA por rol.
+3. Ejecutar QA plan × rol × estado.
+4. Preparar guion de demo comercial.
+5. Preparar onboarding asistido.
+6. Integrar Lemon Squeezy en una fase posterior.
+7. Implementar webhooks de pagos.
+8. Reactivar auditoría administrativa de Edge Functions.
+9. Mejorar automatización de pruebas con identificadores únicos en botones.
+
+---
+
+## Versionado recomendado
+
+Esta versión debe etiquetarse como:
+
+```text
+cotizaflow-demo-stable-v1.0
 ```
 
-Si tu CLI no acepta `--no-verify-jwt`, deja `supabase/config.toml` en el proyecto y ejecuta:
+Reglas sugeridas:
 
-```bat
-supabase functions deploy platform-admin-users
-```
+- `v1.0.1`: correcciones pequeñas sin nuevas funciones.
+- `v1.1`: mejoras funcionales controladas.
+- `v2.0`: pagos automáticos, licenciamiento formal o autoservicio completo.
 
-Verificación:
+---
 
-1. Ejecuta `supabase/schema_phase10u_edge_mobile_layout.sql` si no fue aplicado correctamente.
-2. Despliega la función.
-3. Entra a CotizaFlow con `juan.dmzjob@gmail.com`.
-4. Ve a Configuración > Diagnóstico > Backend seguro > Probar.
-5. En escritorio, desplázate hacia abajo: la columna izquierda debe seguir oscura completa.
-6. En móvil 390px, no debe existir overflow horizontal global.
+## Nota final
 
-## Fase 10X — Sidebar fijo real en desktop
-
-Corrección enfocada:
-
-- En escritorio, el sidebar queda `position: fixed` y no acompaña el scroll del contenido.
-- Solo el módulo/contenido principal se desplaza.
-- El fondo oscuro del sidebar cubre toda la altura visible en todo momento.
-- En móvil se conserva el comportamiento responsive sin overflow global.
-- La llamada a `platform-admin-users` reintenta sin `apikey` si Supabase devuelve error de gateway antes de entrar a la función.
+CotizaFlow Demo Stable v1.0 queda congelada como base estable para demostración y piloto asistido. Cualquier cambio posterior debe aplicarse en una rama o versión nueva para no romper esta versión estable.
