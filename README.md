@@ -118,24 +118,14 @@ Prueba recomendada:
 
 Resultado esperado: Dashboard ganadero, Seguimiento comercial y Control Diario deben abrir sin pantalla vacía ni bloqueo incorrecto.
 
-## Fase 10JK v3 - Corrección hasWritableSubscription
 
-Corrección puntual después de detectar errores de interfaz en `dashboard`, `milk` y `commercial-reports` con el mensaje técnico `hasWritableSubscription is not defined`.
+## Fase 10JK v4 - Corrección de Reportes comerciales
 
-Ajuste:
-- Se agregó la función común `hasWritableSubscription()`.
-- La función permite operación en estados `trial`, `active` y `past_due` cuando la suscripción sigue usable.
-- La función bloquea escritura en `suspended` y `cancelled`.
+Corrección incremental sobre Fase 10JK v3.
+
+- Se agregó `normalizeQuote()` y `normalizeQuoteItem()` como capa común de compatibilidad.
+- Se corrigió el error `normalizeQuote is not defined` en Reportes comerciales.
+- Se validó `app.js` con `node --check`.
 - No requiere SQL nuevo.
 
-Archivos a reemplazar:
-- `app.js`
-- `README.md`
-
-Prueba recomendada:
-1. Entrar con empresa Demo.
-2. Abrir Dashboard.
-3. Abrir Seguimiento.
-4. Intentar abrir Reportes comerciales: debe mostrar bloqueo por plan, no error técnico.
-5. Intentar abrir Control Diario en Demo: debe mostrar bloqueo por Ganadero Pro, no error técnico.
-6. Entrar con tu cuenta principal y abrir Dashboard.
+Actualización recomendada: conservar `config.js` real y reemplazar `app.js` y `README.md`.

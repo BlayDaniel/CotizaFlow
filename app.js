@@ -1715,6 +1715,43 @@ function quoteTotals(quote) {
   return { subtotal, tax, total: subtotal + tax };
 }
 
+function normalizeQuoteItem(item = {}, index = 0) {
+  const quantity = Number(item.quantity || 0);
+  const unit_price = Number(item.unit_price || item.price || 0);
+  return {
+    id: item.id || uid('quote_item'),
+    description: String(item.description || item.name || '').trim(),
+    quantity,
+    unit_price,
+    total: Number(item.total ?? (quantity * unit_price)),
+    position: Number(item.position ?? index)
+  };
+}
+
+function normalizeQuote(quote = {}) {
+  const rawItems = Array.isArray(quote.items) ? quote.items : (Array.isArray(quote.quote_items) ? quote.quote_items : []);
+  const items = rawItems.map(normalizeQuoteItem).sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
+  const normalized = {
+    ...quote,
+    id: quote.id || uid('quote'),
+    company_id: quote.company_id || state.company?.id || 'local-company',
+    client_id: quote.client_id || '',
+    quote_number: String(quote.quote_number || '').trim(),
+    status: String(quote.status || 'draft'),
+    created_at: quote.created_at || new Date().toISOString(),
+    updated_at: quote.updated_at || quote.created_at || new Date().toISOString(),
+    valid_until: quote.valid_until || '',
+    tax_rate: Number(quote.tax_rate ?? state.company?.tax_rate ?? 0),
+    notes: String(quote.notes || '').trim(),
+    items
+  };
+  normalized.totals = quoteTotals(normalized);
+  normalized.commercialStatus = quote.commercialStatus || getQuoteCommercialStatus(normalized);
+  normalized.client = quote.client || getClient(normalized.client_id);
+  normalized.needsFollowup = typeof quote.needsFollowup === 'boolean' ? quote.needsFollowup : quoteNeedsFollowup(normalized);
+  return normalized;
+}
+
 function getClient(clientId) {
   return state.clients.find(c => c.id === clientId) || null;
 }
