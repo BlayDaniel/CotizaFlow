@@ -7,12 +7,13 @@ const PREFERENCES_STORAGE_KEY = 'cotizaflow_preferences_v1';
 const MILK_RECORDS_STORAGE_KEY = 'cotizaflow_milk_records_v1';
 const DAIRY_SETTINGS_STORAGE_KEY = 'cotizaflow_dairy_settings_v1';
 const INVOICE_FALLBACK_STORAGE_KEY = 'cotizaflow_invoices_fallback_v1';
+const EXPORT_USAGE_STORAGE_KEY = 'cotizaflow_export_usage_v1';
 
 const PLAN_CATALOG = {
   demo: {
     name: 'Demo', price: 0, currency: 'DOP', priceLabel: 'Prueba', quoteLimit: 5, maxQuotesPerMonth: 5, maxClients: 5, maxInvoicesPerMonth: 2, maxExportsPerMonth: 0, users: 1, catalogLimit: 10,
     setupLabel: 'Sin setup', upgradeLabel: 'CRM Básico',
-    description: 'Prueba controlada con límites fuertes. No está pensado para operar una empresa real.',
+    description: 'Prueba controlada con datos de evaluación, límites fuertes y marca de agua. No está pensado para operar una empresa real.',
     features: ['crm_core','dashboard_basic','clients','quotes','quote_pdf','follow_up','catalog','invoices','company_branding'],
     lockedPdfWatermark: true
   },
@@ -175,6 +176,10 @@ const defaultCompany = {
   default_invoice_due_days: 15,
   default_invoice_notes: 'Gracias por su compra. Esta factura comercial está sujeta a los términos acordados.',
   default_invoice_terms: '',
+  invoice_document_label: 'Factura comercial interna',
+  fiscal_integration_status: 'not_enabled',
+  fiscal_provider: '',
+  default_fiscal_receipt_type: 'none',
   invoice_fiscal_mode: 'commercial_internal'
 };
 
@@ -231,13 +236,13 @@ const TRANSLATIONS = {
   es: {
     language: 'Idioma', spanish: 'Español', english: 'Inglés', dashboard: 'Dashboard', quotes: 'Cotizaciones',
     newQuote: 'Nueva cotización', followup: 'Seguimiento', clients: 'CRM clientes', catalog: 'Catálogo', templates: 'Plantillas',
-    settings: 'Configuración', milkControl: 'Control Diario', invoices: 'Facturas', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones', users: 'Usuarios y roles',
+    settings: 'Configuración', milkControl: 'Control Diario', invoices: 'Facturas comerciales', company: 'Empresa', billing: 'Planes y pagos', affiliates: 'Referidos', integrations: 'Integraciones', users: 'Usuarios y roles',
     back: 'Regresar', theme: 'Temas', white: 'White', black: 'Black', saveSettings: 'Guardar configuración'
   },
   en: {
     language: 'Language', spanish: 'Spanish', english: 'English', dashboard: 'Dashboard', quotes: 'Quotes',
     newQuote: 'New quote', followup: 'Follow-up', clients: 'Client CRM', catalog: 'Catalog', templates: 'Templates',
-    settings: 'Settings', milkControl: 'Daily control', invoices: 'Invoices', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations', users: 'Users & roles',
+    settings: 'Settings', milkControl: 'Daily control', invoices: 'Commercial invoices', company: 'Company', billing: 'Plans & payments', affiliates: 'Referrals', integrations: 'Integrations', users: 'Users & roles',
     back: 'Back', theme: 'Themes', white: 'White', black: 'Black', saveSettings: 'Save settings'
   }
 };
@@ -1137,6 +1142,63 @@ function subscriptionStatusNotice() {
 }
 
 
+function isDemoPlan() {
+  return getEffectivePlanKey() === 'demo';
+}
+
+function demoRestrictionNotice() {
+  if (!isDemoPlan()) return '';
+  return 'Demo está limitado para evaluación: 5 clientes, 5 cotizaciones, 2 facturas comerciales de prueba, sin CSV ni módulo ganadero real, y PDFs con marca de agua.';
+}
+
+function exportUsageKey() {
+  const companyId = state.company?.id || 'local-company';
+  const userId = state.session?.id || 'local-user';
+  return `${EXPORT_USAGE_STORAGE_KEY}:${userId}:${companyId}`;
+}
+
+function loadExportUsageEvents() {
+  try {
+    const raw = localStorage.getItem(exportUsageKey());
+    return raw ? JSON.parse(raw) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function saveExportUsageEvents(events) {
+  try {
+    localStorage.setItem(exportUsageKey(), JSON.stringify(events || []));
+  } catch (_error) {}
+}
+
+function getMonthlyExportCount() {
+  const start = getMonthStartISO();
+  return loadExportUsageEvents().filter(event => String(event.created_at || '') >= start).reduce((sum, event) => sum + Number(event.quantity || 1), 0);
+}
+
+async function recordExportUsage(eventKey = 'export') {
+  const event = { event_key: eventKey, resource_key: 'exports', quantity: 1, created_at: new Date().toISOString() };
+  const events = loadExportUsageEvents();
+  events.push(event);
+  saveExportUsageEvents(events);
+  if (mode === 'supabase' && supabaseClient && state.company?.id) {
+    try {
+      await supabaseClient.from('company_usage_events').insert({
+        company_id: state.company.id,
+        user_id: state.session?.id || null,
+        event_key: eventKey,
+        resource_key: 'exports',
+        quantity: 1,
+        metadata: { route: getRoute(), plan: getEffectivePlanKey() }
+      });
+    } catch (error) {
+      console.warn('No se pudo registrar uso de exportación. Ejecuta schema_phase10c si falta company_usage_events:', error.message || error);
+    }
+  }
+}
+
+
 function normalizePlanKey(planValue) {
   const plan = String(planValue || 'demo').toLowerCase().trim();
   return LEGACY_PLAN_ALIASES[plan] || (PLAN_CATALOG[plan] ? plan : 'demo');
@@ -1184,6 +1246,44 @@ function renderFeatureLocked(featureKey, title = 'Función no incluida en tu pla
         <div><strong>Estado</strong><span>${escapeHtml(normalizeSubscriptionStatus(getRawBillingStatus()))}</span></div>
       </div>
       ${renderUpgradeActions(planKey)}
+    </section>
+  `;
+}
+
+
+function isDairyBusiness() {
+  return state.company?.business_type === 'asociacion_ganaderos';
+}
+
+function canOperateGanadero() {
+  return isDairyBusiness() && canUseFeature('ganadero_module') && can('milk_read');
+}
+
+function renderGanaderoUpgrade() {
+  const plan = getEffectivePlan();
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  const isDairy = isDairyBusiness();
+  const reason = !isDairy
+    ? 'Este módulo se activa para empresas configuradas como Asociación Ganaderos.'
+    : status === 'suspended' || status === 'cancelled'
+      ? 'La cuenta puede consultar información existente, pero no operar el módulo hasta reactivar la suscripción.'
+      : 'El tipo de negocio es Asociación Ganaderos, pero el plan actual no incluye el módulo vertical Ganadero Pro.';
+  return `
+    <section class="card access-denied upgrade-card ganadero-upgrade-card">
+      <span class="badge locked">Disponible en Ganadero Pro</span>
+      <h1>Activa Ganadero Pro</h1>
+      <p>${escapeHtml(reason)}</p>
+      <div class="upgrade-value-grid">
+        <div><strong>Control diario</strong><span>Registra litros por productor, precio por litro y comisión.</span></div>
+        <div><strong>Cierre mensual</strong><span>Genera resumen por productor, neto a pagar, PDF y CSV.</span></div>
+        <div><strong>CRM conectado</strong><span>Cada productor conserva historial en Clientes.</span></div>
+        <div><strong>Plan actual</strong><span>${escapeHtml(plan.name)} · ${escapeHtml(status)}</span></div>
+      </div>
+      <div class="notice info">
+        Ganadero Pro no reemplaza la facturación fiscal. Opera la llegada de leche, liquidaciones internas y ventas comerciales de insumos desde el CRM.
+      </div>
+      ${renderUpgradeActions('ganadero_pro')}
+      ${!isDairy ? `<button class="btn secondary" data-route="settings">Configurar tipo de negocio</button>` : ''}
     </section>
   `;
 }
@@ -1333,7 +1433,7 @@ function getPlanUsage() {
     invoices: usageResource('Facturas comerciales mensuales', getMonthlyInvoiceCount(), plan.maxInvoicesPerMonth),
     catalog: usageResource('Items de catálogo', activeProductsServices().length, plan.catalogLimit),
     users: usageResource('Usuarios', Math.max(1, (state.teamMembers || []).filter(m => String(m.status || 'active') === 'active').length || 1), plan.users),
-    exports: usageResource('Exportaciones mensuales', 0, plan.maxExportsPerMonth)
+    exports: usageResource('Exportaciones mensuales', getMonthlyExportCount(), plan.maxExportsPerMonth)
   };
   const quoteUsage = resources.quotes;
   return { planKey, plan, resources, used: quoteUsage.used, limit: quoteUsage.limit, remaining: quoteUsage.remaining, percent: quoteUsage.percent };
@@ -1835,14 +1935,14 @@ function navLink(route, label) {
 }
 
 function renderMilkNavLink() {
-  if (state.company?.business_type !== 'asociacion_ganaderos') return '';
+  if (!isDairyBusiness()) return '';
   if (!can('milk_read')) return '';
-  if (canUseFeature('ganadero_module')) return navLink('milk', t('milkControl'));
+  if (canOperateGanadero()) return navLink('milk', t('milkControl'));
   return navLink('ganadero-upgrade', `${t('milkControl')} 🔒`);
 }
 
 function renderRoute(route) {
-  if (route === 'ganadero-upgrade') return renderFeatureLocked('ganadero_module', 'Ganadero Pro requerido', 'Activa Ganadero Pro para registrar entregas diarias de leche, calcular comisiones y generar resúmenes mensuales por productor.');
+  if (route === 'ganadero-upgrade') return renderGanaderoUpgrade();
   if (route === 'invoices-upgrade') return renderFeatureLocked('invoices', 'Facturas comerciales no incluidas', 'Actualiza tu plan para crear facturas comerciales, controlar pagos y consultar cuentas por cobrar.');
   if (route.startsWith('quote-edit/')) return can('quotes_write') ? renderQuoteForm(route.split('/')[1]) : renderAccessDenied();
   if (route.startsWith('quote-view/')) return can('quotes_read') ? renderQuoteView(route.split('/')[1]) : renderAccessDenied();
@@ -1868,7 +1968,7 @@ function renderRoute(route) {
   };
   const permission = routePermissions[route];
   if (permission && !can(permission)) return renderAccessDenied();
-  if (route === 'milk' && !canUseFeature('ganadero_module')) return renderFeatureLocked('ganadero_module', 'Ganadero Pro requerido', 'El tipo de negocio es Asociación Ganaderos, pero el plan actual no incluye Control Diario.');
+  if (route === 'milk' && !canOperateGanadero()) return renderGanaderoUpgrade();
   if (route === 'invoices' && !canUseFeature('invoices')) return renderFeatureLocked('invoices', 'Facturas comerciales no incluidas');
   if (route === 'quote-new' && !evaluateActionGate('quote_create').ok) return renderActionLocked('quote_create', {}, 'No puedes crear otra cotización');
   if (route === 'catalog' && !canUseFeature('catalog')) return renderFeatureLocked('catalog', 'Catálogo no incluido');
@@ -2175,7 +2275,7 @@ function renderDairyDashboard() {
 }
 
 function renderDashboard() {
-  if (state.company?.business_type === 'asociacion_ganaderos') return renderDairyDashboard();
+  if (isDairyBusiness()) return canOperateGanadero() ? renderDairyDashboard() : renderGanaderoUpgrade();
   const analytics = getCommercialAnalytics();
   const latest = [...analytics.quotes].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, 6);
   const topClients = getTopClients(analytics.quotes).slice(0, 5);
@@ -2478,6 +2578,28 @@ function formatLimit(value) {
   return Number.isFinite(value) ? numberFmt(value, 0) : 'Ilimitado';
 }
 
+function renderDemoLimitCard() {
+  if (!isDemoPlan()) return '';
+  return `
+    <section class="card demo-limit-card" style="margin-top:18px;">
+      <div class="page-header" style="margin-bottom:12px;">
+        <div>
+          <span class="badge locked">Demo no productivo</span>
+          <h2>Prueba controlada</h2>
+          <p>${escapeHtml(demoRestrictionNotice())}</p>
+        </div>
+        <button class="btn primary" data-route="billing">Actualizar plan</button>
+      </div>
+      <div class="bullets">
+        <span>Los PDFs salen con marca de agua DEMO.</span>
+        <span>Las exportaciones CSV quedan bloqueadas.</span>
+        <span>Control Diario ganadero requiere Ganadero Pro.</span>
+        <span>Para operar una empresa real, usa CRM Básico, CRM Pro o Ganadero Pro.</span>
+      </div>
+    </section>
+  `;
+}
+
 function renderUsageCard() {
   const usage = getPlanUsage();
   const status = normalizeSubscriptionStatus(getRawBillingStatus());
@@ -2712,6 +2834,9 @@ function normalizeInvoice(invoice = {}) {
     document_type: String(invoice.document_type || 'commercial_invoice'),
     fiscal_number: String(invoice.fiscal_number || ''),
     fiscal_status: String(invoice.fiscal_status || 'not_applicable'),
+    fiscal_receipt_type: String(invoice.fiscal_receipt_type || state.company?.default_fiscal_receipt_type || 'none'),
+    fiscal_provider: String(invoice.fiscal_provider || state.company?.fiscal_provider || ''),
+    fiscal_sync_status: String(invoice.fiscal_sync_status || 'not_enabled'),
     business_context: String(invoice.business_context || getBusinessInvoiceProfile().context),
     source_type: String(invoice.source_type || (invoice.quote_id ? 'quote' : 'manual')),
     items,
@@ -2803,7 +2928,7 @@ function invoiceWhatsappMessage(invoice) {
   const company = state.company || defaultCompany;
   return [
     `Hola ${client?.name || ''},`,
-    `Te compartimos la factura ${invoice.invoice_number} de ${company.name || 'nuestra empresa'}.`,
+    `Te compartimos la factura comercial ${invoice.invoice_number} de ${company.name || 'nuestra empresa'}.`,
     `Total: ${money(invoiceTotals(invoice).total)}.`,
     `Saldo pendiente: ${money(invoiceBalance(invoice))}.`,
     invoice.due_date ? `Vence: ${invoice.due_date}.` : '',
@@ -2830,6 +2955,9 @@ async function saveInvoiceToStorage(invoice) {
       document_type: normalized.document_type,
       fiscal_number: normalized.fiscal_number || null,
       fiscal_status: normalized.fiscal_status,
+      fiscal_receipt_type: normalized.fiscal_receipt_type,
+      fiscal_provider: normalized.fiscal_provider || null,
+      fiscal_sync_status: normalized.fiscal_sync_status,
       business_context: normalized.business_context,
       source_type: normalized.source_type,
       updated_at: new Date().toISOString()
@@ -2868,6 +2996,9 @@ async function updateInvoiceInStorage(invoice) {
         due_date: normalized.due_date || null,
         notes: normalized.notes,
         terms: normalized.terms,
+        fiscal_receipt_type: normalized.fiscal_receipt_type,
+        fiscal_provider: normalized.fiscal_provider || null,
+        fiscal_sync_status: normalized.fiscal_sync_status,
         void_reason: normalized.void_reason || null,
         updated_at: new Date().toISOString()
       })
@@ -3017,6 +3148,7 @@ function renderInvoiceIntelligenceCard() {
   if (state.company?.business_type === 'asociacion_ganaderos') warnings.push(profile.warning);
   if (stats.overdue.length) warnings.push(`${stats.overdue.length} factura(s) están vencidas. Prioriza cobro antes de emitir más crédito.`);
   if (!state.company?.invoice_prefix) warnings.push('Configura prefijo y próximo número en Configuración > Empresa para mantener orden interno.');
+  if (String(state.company?.fiscal_integration_status || 'not_enabled') !== 'enabled_backend') warnings.push('Factura comercial interna: no sustituye comprobante fiscal oficial NCF/e-CF.');
   return `
     <section class="card insight info" style="margin-bottom:18px;">
       <strong>${escapeHtml(profile.title)}</strong>
@@ -3032,11 +3164,11 @@ function renderInvoices() {
   return `
     <div class="page-header">
       <div>
-        <h1>Facturas</h1>
-        <p>Convierte cotizaciones en facturas comerciales, registra pagos y controla saldos pendientes.</p>
+        <h1>Facturas comerciales</h1>
+        <p>Convierte cotizaciones en documentos comerciales internos, registra pagos y controla saldos pendientes.</p>
       </div>
       <div class="header-actions">
-        <button class="btn secondary" data-route="quotes">Facturar desde cotización</button>
+        <button class="btn secondary" data-route="quotes">Crear desde cotización</button>
       </div>
     </div>
     ${renderInvoiceIntelligenceCard()}
@@ -3047,7 +3179,7 @@ function renderInvoices() {
       <div class="card metric"><span>Cobrado</span><strong>${money(stats.totalPaid)}</strong></div>
     </section>
     <section class="card" style="margin-top:18px;">
-      ${invoices.length ? renderInvoicesTable(invoices) : `<div class="empty">No hay facturas todavía. Abre una cotización aceptada o enviada y presiona “Convertir en factura”.</div>`}
+      ${invoices.length ? renderInvoicesTable(invoices) : `<div class="empty">No hay facturas comerciales todavía. Abre una cotización aceptada o enviada y presiona “Convertir en factura comercial comercial”.</div>`}
     </section>
   `;
 }
@@ -3096,7 +3228,7 @@ function renderInvoiceView(id) {
   return `
     <div class="page-header">
       <div>
-        <h1>Factura ${escapeHtml(invoice.invoice_number)}</h1>
+        <h1>${escapeHtml(state.company?.invoice_document_label || 'Factura comercial')} ${escapeHtml(invoice.invoice_number)}</h1>
         <p>${escapeHtml(client?.name || 'Sin cliente')} · ${invoiceStatusBadge(effectiveStatus)}</p>
       </div>
       <div class="header-actions">
@@ -3116,13 +3248,15 @@ function renderInvoiceView(id) {
     </section>
 
     ${state.company?.business_type === 'asociacion_ganaderos' ? `<section class="card insight warning" style="margin-top:18px;"><strong>Regla ganadera</strong><span>Esta factura representa ventas de insumos/servicios. La leche recibida y el pago al productor se manejan por Control Diario y liquidación mensual.</span></section>` : ''}
+    <section class="card insight info" style="margin-top:18px;"><strong>Documento comercial interno</strong><span>Este documento ayuda a cobrar y controlar saldos. No sustituye comprobante fiscal oficial hasta activar integración NCF/e-CF mediante backend seguro.</span></section>
 
     <section class="card" style="margin-top:18px;">
       <h2>Detalle</h2>
       <div class="summary-line"><span>Cliente</span><strong>${escapeHtml(client?.name || '')}</strong></div>
       <div class="summary-line"><span>Cotización origen</span><strong>${quote ? escapeHtml(quote.quote_number) : 'Manual / sin cotización'}</strong></div>
-      <div class="summary-line"><span>Tipo</span><strong>Factura comercial interna</strong></div>
-      <div class="summary-line"><span>Fiscal</span><strong>${invoice.fiscal_number ? escapeHtml(invoice.fiscal_number) : 'No fiscal / preparado para NCF-eCF futuro'}</strong></div>
+      <div class="summary-line"><span>Tipo</span><strong>${escapeHtml(state.company?.invoice_document_label || 'Factura comercial interna')}</strong></div>
+      <div class="summary-line"><span>Fiscal</span><strong>${invoice.fiscal_number ? escapeHtml(invoice.fiscal_number) : 'No fiscal / NCF-eCF futuro'}</strong></div>
+      <div class="summary-line"><span>Comprobante</span><strong>${escapeHtml(invoice.fiscal_receipt_type || state.company?.default_fiscal_receipt_type || 'none')}</strong></div>
     </section>
 
     <section class="card" style="margin-top:18px;">
@@ -3207,7 +3341,7 @@ function generateInvoicePdf(id) {
   }
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
-  doc.text('FACTURA COMERCIAL', 400, 48);
+  doc.text(String(company.invoice_document_label || 'FACTURA COMERCIAL').toUpperCase(), 400, 48);
   doc.setFontSize(10);
   doc.text(invoice.invoice_number || '', 400, 65);
   doc.setFont('helvetica', 'normal');
@@ -3260,7 +3394,7 @@ function generateInvoicePdf(id) {
   doc.text('Pagado', 410, y); doc.text(money(invoicePaidAmount(invoice)), 500, y);
   y += 18;
   doc.text('Saldo', 410, y); doc.text(money(invoiceBalance(invoice)), 500, y);
-  const footerText = [invoice.notes || '', invoice.terms ? `Términos: ${invoice.terms}` : '', 'Documento comercial interno. Preparado para integración fiscal futura.'].filter(Boolean).join('\n\n');
+  const footerText = [invoice.notes || '', invoice.terms ? `Términos: ${invoice.terms}` : '', 'Documento comercial interno. No sustituye comprobante fiscal oficial NCF/e-CF hasta activar integración fiscal mediante backend seguro.'].filter(Boolean).join('\n\n');
   if (footerText) {
     y += 34;
     doc.setFont('helvetica', 'normal');
@@ -3316,7 +3450,7 @@ function renderQuotesTable(quotes, compact = false) {
                     <button class="btn secondary small" data-route="quote-view/${quote.id}">Ver</button>
                     ${can('quotes_write') ? `<button class="btn secondary small" data-route="quote-edit/${quote.id}">Editar</button>` : ''}
                     <button class="btn secondary small" data-action="pdf" data-id="${quote.id}">PDF</button>
-                    ${can('invoices_write') ? `<button class="btn secondary small" data-action="convert-quote-invoice" data-id="${quote.id}">Facturar</button>` : ''}
+                    ${can('invoices_write') ? `<button class="btn secondary small" data-action="convert-quote-invoice" data-id="${quote.id}">Facturar comercial</button>` : ''}
                     ${can('quotes_delete') ? `<button class="btn danger small" data-action="delete-quote" data-id="${quote.id}">Borrar</button>` : ''}
                   </td>
                 `}
@@ -3502,7 +3636,7 @@ function renderClientCrmTable(clients) {
                 <td>
                   <div class="actions">
                     ${can('quotes_write') ? `<button class="btn secondary small" data-route="quote-new" data-prefill-client="${client.id}">Cotizar</button>` : ''}
-                    ${state.company?.business_type === 'asociacion_ganaderos' && can('milk_write') ? `<button class="btn secondary small" data-route="milk" data-prefill-milk-client="${client.id}">Control Diario</button>` : ''}
+                    ${isDairyBusiness() && canOperateGanadero() && can('milk_write') ? `<button class="btn secondary small" data-route="milk" data-prefill-milk-client="${client.id}">Control Diario</button>` : ''}
                     ${stats.lastQuote ? `<button class="btn secondary small" data-route="quote-view/${stats.lastQuote.id}">Ver última</button>` : ''}
                     ${can('invoices_read') && stats.invoices.length ? `<button class="btn secondary small" data-route="invoices">Facturas: ${stats.invoices.length}</button>` : ''}
                     ${can('clients_delete') ? `<button class="btn danger small" data-action="delete-client" data-id="${client.id}">Borrar</button>` : ''}
@@ -3759,7 +3893,7 @@ function renderLogoPreview(c) {
 
 function renderConfigNav(active = 'settings') {
   const cards = [
-    ['settings', t('company'), 'Datos fiscales, logo, temas y formato de cotización', 'settings_company'],
+    ['settings', t('company'), 'Empresa, marca, temas y documentos comerciales', 'settings_company'],
     ['billing', t('billing'), 'Suscripción, límites y checkout', 'billing_manage'],
     ['team', t('users'), 'Superusuario, roles y permisos por usuario', 'users_manage'],
     ['affiliates', t('affiliates'), 'Código, comisiones y enlace', 'affiliates_manage'],
@@ -3808,7 +3942,20 @@ function renderSettings() {
         <div class="field"><label>Impuesto %</label><input name="tax_rate" type="number" step="0.01" min="0" value="${escapeHtml(c.tax_rate)}" /></div>
         <div class="field"><label>Prefijo factura</label><input name="invoice_prefix" value="${escapeHtml(c.invoice_prefix || getBusinessInvoiceProfile().prefix)}" /></div>
         <div class="field"><label>Próximo número factura</label><input name="next_invoice_number" type="number" min="1" step="1" value="${escapeHtml(c.next_invoice_number || 1)}" /></div>
-        <div class="field"><label>Días de vencimiento factura</label><input name="default_invoice_due_days" type="number" min="0" step="1" value="${escapeHtml(c.default_invoice_due_days ?? getBusinessInvoiceProfile().dueDays)}" /></div>
+        <div class="field"><label>Días de vencimiento factura comercial</label><input name="default_invoice_due_days" type="number" min="0" step="1" value="${escapeHtml(c.default_invoice_due_days ?? getBusinessInvoiceProfile().dueDays)}" /></div>
+        <div class="field"><label>Etiqueta del documento</label><input name="invoice_document_label" value="${escapeHtml(c.invoice_document_label || 'Factura comercial interna')}" /></div>
+        <div class="field"><label>Estado fiscal</label>
+          <select name="fiscal_integration_status">
+            ${[['not_enabled','No fiscal / interno'], ['planned','Preparado para NCF/e-CF futuro'], ['provider_required','Requiere proveedor fiscal'], ['enabled_backend','Fiscal activo vía backend']].map(([value, label]) => `<option value="${value}" ${String(c.fiscal_integration_status || 'not_enabled') === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+          <p class="help">Mientras no exista backend fiscal, el sistema emite solo facturas comerciales internas.</p>
+        </div>
+        <div class="field"><label>Proveedor fiscal futuro</label><input name="fiscal_provider" value="${escapeHtml(c.fiscal_provider || '')}" placeholder="Proveedor NCF/e-CF futuro" /></div>
+        <div class="field"><label>Tipo comprobante por defecto</label>
+          <select name="default_fiscal_receipt_type">
+            ${[['none','No aplica'], ['b01','B01 Crédito fiscal'], ['b02','B02 Consumo'], ['b14','B14 Regímenes especiales'], ['b15','B15 Gubernamental'], ['ecf','e-CF futuro']].map(([value, label]) => `<option value="${value}" ${String(c.default_fiscal_receipt_type || 'none') === value ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
         <div class="field"><label>Tipo de negocio</label>
           <select name="business_type">
             ${businessTypeOptions(c.business_type)}
@@ -3847,8 +3994,8 @@ function renderSettings() {
         </div>
         <div class="field" style="grid-column:1/-1;"><label>Dirección</label><textarea name="address">${escapeHtml(c.address)}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en cotizaciones</label><textarea name="default_quote_notes">${escapeHtml(c.default_quote_notes || defaultCompany.default_quote_notes)}</textarea></div>
-        <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en facturas</label><textarea name="default_invoice_notes">${escapeHtml(c.default_invoice_notes || defaultCompany.default_invoice_notes)}</textarea></div>
-        <div class="field" style="grid-column:1/-1;"><label>Términos por defecto en facturas</label><textarea name="default_invoice_terms" placeholder="Ej.: Pago contra entrega, transferencia bancaria, crédito 15 días.">${escapeHtml(c.default_invoice_terms || '')}</textarea><p class="help">Fase 9 maneja factura comercial interna / cuenta por cobrar. NCF/e-CF fiscal queda preparado para una fase con backend seguro.</p></div>
+        <div class="field" style="grid-column:1/-1;"><label>Notas por defecto en facturas comerciales</label><textarea name="default_invoice_notes">${escapeHtml(c.default_invoice_notes || defaultCompany.default_invoice_notes)}</textarea></div>
+        <div class="field" style="grid-column:1/-1;"><label>Términos por defecto en facturas comerciales</label><textarea name="default_invoice_terms" placeholder="Ej.: Pago contra entrega, transferencia bancaria, crédito 15 días.">${escapeHtml(c.default_invoice_terms || '')}</textarea><p class="help">Este módulo genera documentos comerciales internos. NCF/e-CF fiscal requiere backend seguro y proveedor/flujo autorizado en una fase posterior.</p></div>
         <div class="field" style="grid-column:1/-1;"><label>Términos y condiciones por defecto</label><textarea name="default_terms" placeholder="Opcional">${escapeHtml(c.default_terms || '')}</textarea></div>
         <div class="field" style="grid-column:1/-1;"><label>Mensaje WhatsApp por defecto</label><textarea name="default_whatsapp_template" placeholder="Usa variables: {{client_name}}, {{quote_number}}, {{quote_total}}, {{public_link}}, {{company_name}}">${escapeHtml(c.default_whatsapp_template || '')}</textarea></div>
         <button class="btn primary" type="submit">${escapeHtml(t('saveSettings'))}</button>
@@ -4012,7 +4159,7 @@ function renderQuoteView(id) {
       <div class="header-actions">
         <button class="btn secondary" data-route="quotes">Volver</button>
         <button class="btn secondary" data-route="quote-edit/${quote.id}">Editar</button>
-        ${can('invoices_write') ? `<button class="btn primary" data-action="convert-quote-invoice" data-id="${quote.id}">Convertir en factura</button>` : ''}
+        ${can('invoices_write') ? `<button class="btn primary" data-action="convert-quote-invoice" data-id="${quote.id}">Convertir en factura comercial</button>` : ''}
         <button class="btn primary" data-action="pdf" data-id="${quote.id}">PDF</button>
       </div>
     </div>
@@ -4159,6 +4306,7 @@ function summarizeMilkByProducer(records) {
 }
 
 function renderMilkControl() {
+  if (!canOperateGanadero()) return renderGanaderoUpgrade();
   const month = state.milkFilters?.month || currentMonthValue();
   const records = getMilkRecordsForMonth(month);
   const summary = summarizeMilkByProducer(records);
@@ -4182,8 +4330,8 @@ function renderMilkControl() {
         <p>Registra la llegada diaria por productor, calcula comisión y genera el cierre mensual imprimible.</p>
       </div>
       <div class="header-actions">
-        <button class="btn secondary" data-action="milk-csv">Exportar CSV</button>
-        <button class="btn primary" data-action="milk-pdf">PDF mensual</button>
+        ${can('milk_export') && canUseFeature('ganadero_csv') ? `<button class="btn secondary" data-action="milk-csv">Exportar CSV</button>` : `<button class="btn secondary" data-route="billing">CSV en Ganadero Pro</button>`}
+        ${can('milk_export') && canUseFeature('ganadero_pdf') ? `<button class="btn primary" data-action="milk-pdf">PDF mensual</button>` : `<button class="btn primary" data-route="billing">PDF en Ganadero Pro</button>`}
       </div>
     </div>
 
@@ -4220,7 +4368,7 @@ function renderMilkControl() {
           <div class="field"><label>Precio por litro</label><input name="price_per_liter" type="number" step="0.01" min="0" value="${escapeHtml(dairyDefaults.price_per_liter)}" readonly required /></div>
           <div class="field"><label>% comisión asociación</label><input name="commission_rate" type="number" step="0.01" min="0" max="100" value="${escapeHtml(dairyDefaults.commission_rate)}" readonly required /></div>
           <div class="field"><label>Nota</label><input name="notes" placeholder="Opcional: calidad, ruta, observación" /></div>
-          <button class="btn primary" type="submit">Registrar llegada</button>
+          <button class="btn primary" type="submit" ${can('milk_write') && canUseFeature('ganadero_daily_control') && hasWritableSubscription() ? '' : 'disabled'}>Registrar llegada</button>
         </form>
         <p class="help" style="margin-top:12px;">Cálculo usado: litros × precio configurado = monto bruto. Comisión = monto bruto × % configurado. Neto a pagar = bruto - comisión.</p>
         <p class="help">Almacenamiento actual: ${state.milkStorageMode === 'supabase' ? 'Supabase' : 'local del navegador'}.</p>
@@ -4293,7 +4441,7 @@ function renderMilkRecordsTable(records) {
               <td>${numberFmt(record.commission_rate, 2)}%</td>
               <td><strong>${money(record.net_amount)}</strong></td>
               <td>${escapeHtml(record.notes || '')}</td>
-              <td><button class="btn danger small" data-action="delete-milk-record" data-id="${escapeHtml(record.id)}">Borrar</button></td>
+              <td>${can('milk_delete') && hasWritableSubscription() ? `<button class="btn danger small" data-action="delete-milk-record" data-id="${escapeHtml(record.id)}">Borrar</button>` : `<span class="badge muted">Solo lectura</span>`}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -4772,6 +4920,7 @@ function renderBilling() {
     ${renderConfigNav('billing')}
 
     <div style="margin-top:18px;">${renderUsageCard()}</div>
+    ${renderDemoLimitCard()}
     ${renderModuleAccessGrid()}
 
     <section class="grid cols-4" style="margin-top:18px;">
@@ -5146,6 +5295,10 @@ async function saveCompany(form) {
     default_invoice_due_days: Math.max(0, Number(fd.get('default_invoice_due_days') || getBusinessInvoiceProfile(nextBusinessType).dueDays || 15)),
     default_invoice_notes: String(fd.get('default_invoice_notes') || '').trim(),
     default_invoice_terms: String(fd.get('default_invoice_terms') || '').trim(),
+    invoice_document_label: String(fd.get('invoice_document_label') || 'Factura comercial interna').trim(),
+    fiscal_integration_status: String(fd.get('fiscal_integration_status') || 'not_enabled').trim(),
+    fiscal_provider: String(fd.get('fiscal_provider') || '').trim(),
+    default_fiscal_receipt_type: String(fd.get('default_fiscal_receipt_type') || 'none').trim(),
     invoice_fiscal_mode: 'commercial_internal',
     logo_data_url: String(fd.get('logo_data_url') || '').trim(),
     logo_position: ['left','center','right'].includes(String(fd.get('logo_position') || 'right')) ? String(fd.get('logo_position') || 'right') : 'right'
@@ -5156,7 +5309,7 @@ async function saveCompany(form) {
   if (mode === 'supabase') {
     const fullPayload = { ...payload, ...dairyFields };
     const fallbackCompanyPayload = { ...payload };
-    ['invoice_prefix','next_invoice_number','default_invoice_due_days','default_invoice_notes','default_invoice_terms','invoice_fiscal_mode','default_milk_price_per_liter','default_milk_commission_rate'].forEach(key => delete fallbackCompanyPayload[key]);
+    ['invoice_prefix','next_invoice_number','default_invoice_due_days','default_invoice_notes','default_invoice_terms','invoice_document_label','fiscal_integration_status','fiscal_provider','default_fiscal_receipt_type','invoice_fiscal_mode','default_milk_price_per_liter','default_milk_commission_rate'].forEach(key => delete fallbackCompanyPayload[key]);
     let result = await supabaseClient
       .from('companies')
       .update(fullPayload)

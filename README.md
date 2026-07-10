@@ -1,37 +1,60 @@
-# CotizaFlow - Fase 10D
+# CotizaFlow — Fase 10G
 
-Fase incremental para reforzar la interfaz SaaS por plan sin refactorizar todo el sistema ni romper compatibilidad con las tablas actuales.
+## Ganadero Pro como módulo premium
 
-## Incluye
+Entrega incremental. No refactoriza el sistema completo y mantiene compatibilidad con las tablas actuales.
 
-- Dashboard con aviso comercial según plan actual, demo, suscripción bloqueada o funciones premium disponibles.
-- Pantalla de Planes y pagos con matriz de acceso por módulos.
-- Mensajes de upgrade más claros para funciones bloqueadas.
-- Botones de contacto comercial por WhatsApp o email.
-- Configuración opcional `salesWhatsapp` en `config.example.js`.
-- Sin cambios destructivos de base de datos.
+### Cambios principales
 
-## Archivos principales
+- El Dashboard ganadero ya no se muestra solo por tener tipo de negocio `Asociación Ganaderos`.
+- Ahora requiere tres condiciones:
+  - Tipo de negocio: Asociación Ganaderos.
+  - Plan con feature `ganadero_module`: Ganadero Pro o CRM Empresa.
+  - Rol con permisos de lectura del módulo ganadero.
+- Si la empresa es ganadera pero el plan no permite el módulo, se muestra una pantalla comercial de upgrade a Ganadero Pro.
+- Control Diario queda bloqueado si no hay permiso real de Ganadero Pro.
+- Botones de PDF/CSV ganadero respetan permisos por plan y rol.
+- El botón Control Diario dentro de Clientes solo aparece cuando el módulo está realmente habilitado.
+- Se refuerza la separación entre:
+  - Facturas comerciales internas.
+  - Operación ganadera de leche y liquidaciones internas futuras.
+
+### SQL nuevo
+
+Ejecutar en Supabase SQL Editor:
+
+`supabase/schema_phase10g_ganadero_premium.sql`
+
+Orden recomendado:
+
+1. `schema_phase9_invoices.sql`
+2. `schema_phase10a_saas_plans.sql`
+3. `schema_phase10b_superuser_roles.sql`
+4. `schema_phase10c_internal_guards.sql`
+5. `schema_phase10e_demo_limits.sql`
+6. `schema_phase10f_commercial_fiscal_boundary.sql`
+7. `schema_phase10g_ganadero_premium.sql`
+
+### Prueba recomendada
+
+1. Configura una empresa como Asociación Ganaderos.
+2. Déjala en Demo, CRM Básico o CRM Pro.
+3. Verifica que Dashboard muestre upgrade a Ganadero Pro.
+4. Intenta abrir Control Diario: debe mostrar bloqueo comercial, no pantalla vacía.
+5. Cambia el entitlement a Ganadero Pro.
+6. Verifica que Dashboard ganadero y Control Diario abran normalmente.
+7. Prueba que un rol sin permiso `milk_read` no vea el módulo.
+
+### Archivos principales
+
+Reemplazar:
 
 - `app.js`
 - `styles.css`
-- `config.example.js`
 - `README.md`
 
-## SQL
+Agregar y ejecutar:
 
-Esta fase no requiere SQL nuevo. Usa las tablas y funciones creadas en Fase 10A, 10B y 10C.
+- `supabase/schema_phase10g_ganadero_premium.sql`
 
-## Pruebas sugeridas
-
-1. Entrar con una empresa Demo.
-2. Ver el aviso de Demo limitado en Dashboard.
-3. Abrir Configuración > Planes y pagos.
-4. Confirmar que aparece la matriz de módulos incluidos/bloqueados.
-5. Intentar abrir Control Diario en una Asociación Ganaderos sin Ganadero Pro.
-6. Confirmar que aparece mensaje de upgrade.
-7. Probar botón de contacto comercial.
-
-## Compatibilidad
-
-No elimina tablas, columnas ni rutas existentes. Mantiene el fallback local si Supabase aún no tiene todos los entitlements cargados.
+Conservar tu `config.js` real.
