@@ -148,3 +148,13 @@ Verificación:
 4. Ve a Configuración > Diagnóstico > Backend seguro > Probar.
 5. En escritorio, desplázate hacia abajo: la columna izquierda debe seguir oscura completa.
 6. En móvil 390px, no debe existir overflow horizontal global.
+
+## Fase 10X — Sidebar fijo real en desktop
+
+Corrección enfocada:
+
+- En escritorio, el sidebar queda `position: fixed` y no acompaña el scroll del contenido.
+- Solo el módulo/contenido principal se desplaza.
+- El fondo oscuro del sidebar cubre toda la altura visible en todo momento.
+- En móvil se conserva el comportamiento responsive sin overflow global.
+- La llamada a `platform-admin-users` reintenta sin `apikey` si Supabase devuelve error de gateway antes de entrar a la función.

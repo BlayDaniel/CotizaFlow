@@ -6014,16 +6014,28 @@ async function callPlatformAdminUsers(action, payload = {}) {
   if (!config.supabaseUrl) throw new Error('Supabase URL no configurada.');
   const endpoint = `${String(config.supabaseUrl).replace(/\/$/, '')}/functions/v1/platform-admin-users`;
   const accessToken = await getCurrentAccessToken();
-  const headers = {
-    'Content-Type': 'application/json',
-    'apikey': config.supabaseAnonKey || ''
-  };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ action, ...payload })
-  });
+  const requestBody = JSON.stringify({ action, ...payload });
+  const baseHeaders = { 'Content-Type': 'application/json' };
+  if (accessToken) baseHeaders.Authorization = `Bearer ${accessToken}`;
+
+  async function runRequest(extraHeaders = {}) {
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { ...baseHeaders, ...extraHeaders },
+      body: requestBody
+    });
+  }
+
+  let response = await runRequest(config.supabaseAnonKey ? { apikey: config.supabaseAnonKey } : {});
+
+  // Algunas configuraciones nuevas de Supabase pueden rechazar el header apikey
+  // de Publishable Key en Edge Functions con verify_jwt=false. Reintentamos
+  // sin apikey para obtener una respuesta controlada de la función.
+  if (!response.ok && config.supabaseAnonKey) {
+    const retry = await runRequest();
+    if (retry.ok || retry.status !== response.status) response = retry;
+  }
+
   const raw = await response.text();
   let data = null;
   try { data = raw ? JSON.parse(raw) : null; } catch (_) { data = null; }

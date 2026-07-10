@@ -940,3 +940,116 @@ img, svg, canvas, iframe { max-width: 100%; }
   .stat-card strong { font-size: 18px; }
   .usage-item > div:first-child { display: grid; gap: 2px; }
 }
+
+/* Fase 10X: sidebar desktop fijo real.
+   En desktop solo se desplaza el contenido principal; el menú lateral queda anclado.
+   En mobile se conserva el comportamiento responsive sin overflow global. */
+@media (min-width: 901px) {
+  html,
+  body {
+    min-height: 100%;
+    overflow-x: auto;
+  }
+
+  .layout.app-page {
+    display: block !important;
+    position: relative;
+    min-height: 100vh;
+    width: 100%;
+    padding-left: 260px !important;
+    background: var(--bg) !important;
+  }
+
+  .layout.app-page::before {
+    content: "";
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 260px;
+    background: #0f172a;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  html[data-theme="black"] .layout.app-page::before,
+  .theme-black .layout.app-page::before {
+    background: #020617;
+  }
+
+  .layout.app-page > .sidebar {
+    position: fixed !important;
+    inset: 0 auto 0 0 !important;
+    width: 260px !important;
+    height: 100vh !important;
+    min-height: 100vh !important;
+    max-height: 100vh !important;
+    z-index: 20;
+    background: #0f172a;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  html[data-theme="black"] .layout.app-page > .sidebar,
+  .theme-black .layout.app-page > .sidebar {
+    background: #020617;
+  }
+
+  .layout.app-page > .sidebar nav {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    flex: 0 0 auto;
+  }
+
+  .layout.app-page > .sidebar .sidebar-footer {
+    margin-top: auto;
+  }
+
+  .layout.app-page > .main {
+    position: relative;
+    z-index: 1;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    min-height: 100vh;
+    margin-left: 0 !important;
+    padding: 28px !important;
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .layout.app-page {
+    display: block !important;
+    padding-left: 0 !important;
+    width: 100%;
+    max-width: 100%;
+    min-height: 100vh;
+    background: var(--bg) !important;
+  }
+
+  .layout.app-page::before {
+    content: none !important;
+  }
+
+  .layout.app-page > .sidebar {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    z-index: auto;
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+  }
+
+  .layout.app-page > .main {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    overflow-x: hidden !important;
+  }
+}
