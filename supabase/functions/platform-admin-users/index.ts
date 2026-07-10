@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 
 const PLATFORM_SUPERUSER_EMAIL = 'juan.dmzjob@gmail.com';
+const DEFAULT_OVERRIDE = { allow: [], deny: [] };
 
 function normalizeEmail(value: unknown): string {
   return String(value || '').trim().toLowerCase();
@@ -14,16 +15,24 @@ function cleanOverride(value: unknown) {
   return { allow: [...new Set(allow)], deny: [...new Set(deny)] };
 }
 
+function overrideOrDefault(value: unknown) {
+  return cleanOverride(value || DEFAULT_OVERRIDE);
+}
+
+function nonFatalError(error: unknown) {
+  return error && typeof error === 'object' && 'message' in error ? String((error as { message?: unknown }).message || error) : String(error || 'Error desconocido');
+}
+
 async function assertPlatformSuperuser(req: Request, serviceClient: any) {
   const authorization = req.headers.get('Authorization') || '';
   if (!authorization.toLowerCase().startsWith('bearer ')) {
-    return { ok: false, response: jsonResponse({ error: 'Debes iniciar sesión.' }, 401), user: null };
+    return { ok: false, response: jsonResponse({ ok: false, error: 'Debes iniciar sesión.' }, 401), user: null };
   }
   const token = authorization.replace(/^bearer\s+/i, '').trim();
   const { data, error } = await serviceClient.auth.getUser(token);
   const email = normalizeEmail(data?.user?.email);
   if (error || !data?.user || email !== PLATFORM_SUPERUSER_EMAIL) {
-    return { ok: false, response: jsonResponse({ error: 'Solo el superusuario principal puede administrar usuarios globales.' }, 403), user: null };
+    return { ok: false, response: jsonResponse({ ok: false, error: 'Solo el superusuario principal puede administrar usuarios globales.' }, 403), user: null };
   }
   return { ok: true, response: null, user: data.user };
 }
@@ -41,18 +50,105 @@ async function findAuthUserByEmail(serviceClient: any, email: string) {
   return null;
 }
 
-async function lookupAccess(serviceClient: any, email: string) {
-  const { data: memberships, error: membershipsError } = await serviceClient.rpc('platform_lookup_user_access', { lookup_email: email });
-  if (membershipsError) throw membershipsError;
+async function getPlatformOverride(serviceClient: any, email: string) {
+  try {
+    const { data, error } = await serviceClient
+      .from('platform_user_overrides')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (error) {
+    console.warn('platform_user_overrides no disponible:', nonFatalError(error));
+    return null;
+  }
+}
 
-  const { data: overrideRow } = await serviceClient
-    .from('platform_user_overrides')
-    .select('*')
-    .eq('email', email)
-    .maybeSingle();
+async function lookupMembershipsDirect(serviceClient: any, email: string) {
+  const { data: memberships, error: membersError } = await serviceClient
+    .from('company_members')
+    .select('id, company_id, email, full_name, role, status, permission_overrides, feature_overrides, page_overrides, created_at, updated_at')
+    .ilike('email', email);
+  if (membersError) throw membersError;
 
-  const authUser = await findAuthUserByEmail(serviceClient, email);
   const rows = Array.isArray(memberships) ? memberships : [];
+  const companyIds = [...new Set(rows.map((row: any) => row.company_id).filter(Boolean))];
+
+  let companiesById = new Map<string, any>();
+  if (companyIds.length) {
+    const { data: companies, error: companiesError } = await serviceClient
+      .from('companies')
+      .select('id, name, plan, active_plan_id, subscription_status, business_type')
+      .in('id', companyIds);
+    if (companiesError) throw companiesError;
+    companiesById = new Map((companies || []).map((company: any) => [company.id, company]));
+  }
+
+  let billingByCompanyId = new Map<string, any>();
+  if (companyIds.length) {
+    const { data: bills, error: billsError } = await serviceClient
+      .from('billing_subscriptions')
+      .select('id, company_id, plan_id, status, subscription_status, current_period_start, current_period_end, next_billing_date, updated_at, created_at')
+      .in('company_id', companyIds)
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false, nullsFirst: false });
+    if (!billsError) {
+      for (const bill of bills || []) {
+        if (!billingByCompanyId.has(bill.company_id)) billingByCompanyId.set(bill.company_id, bill);
+      }
+    } else {
+      console.warn('billing_subscriptions no disponible:', billsError.message);
+    }
+  }
+
+  const overrideRow = await getPlatformOverride(serviceClient, email);
+
+  return rows.map((member: any) => {
+    const company = companiesById.get(member.company_id) || {};
+    const bill = billingByCompanyId.get(member.company_id) || {};
+    return {
+      member_id: member.id,
+      id: member.id,
+      auth_user_id: null,
+      auth_only: false,
+      company_id: member.company_id,
+      company_name: company.name || 'Empresa sin nombre',
+      company_plan: company.active_plan_id || company.plan || 'demo',
+      company_subscription_status: company.subscription_status || 'trial',
+      email: member.email,
+      full_name: member.full_name || '',
+      role: member.role || 'lector',
+      status: member.status || 'active',
+      permission_overrides: overrideRow?.permission_overrides || member.permission_overrides || DEFAULT_OVERRIDE,
+      feature_overrides: overrideRow?.feature_overrides || member.feature_overrides || DEFAULT_OVERRIDE,
+      page_overrides: overrideRow?.page_overrides || member.page_overrides || DEFAULT_OVERRIDE,
+      plan_id: bill.plan_id || company.active_plan_id || company.plan || 'demo',
+      billing_status: bill.status || bill.subscription_status || company.subscription_status || 'trial',
+      current_period_start: bill.current_period_start || null,
+      current_period_end: bill.current_period_end || null,
+      next_billing_date: bill.next_billing_date || null,
+      created_at: member.created_at,
+      updated_at: member.updated_at
+    };
+  });
+}
+
+async function lookupAccess(serviceClient: any, email: string) {
+  const overrideRow = await getPlatformOverride(serviceClient, email);
+  const authUser = await findAuthUserByEmail(serviceClient, email);
+
+  let rows: any[] = [];
+  let lookupSource = 'direct';
+  try {
+    rows = await lookupMembershipsDirect(serviceClient, email);
+  } catch (directError) {
+    lookupSource = 'rpc-fallback';
+    console.warn('Búsqueda directa falló, intentando RPC:', nonFatalError(directError));
+    const { data: memberships, error: membershipsError } = await serviceClient.rpc('platform_lookup_user_access', { lookup_email: email });
+    if (membershipsError) throw membershipsError;
+    rows = Array.isArray(memberships) ? memberships : [];
+  }
 
   if (!rows.length && authUser) {
     rows.push({
@@ -68,9 +164,9 @@ async function lookupAccess(serviceClient: any, email: string) {
       full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
       role: 'sin_membresia',
       status: authUser.banned_until ? 'inactive' : 'active',
-      permission_overrides: cleanOverride(overrideRow?.permission_overrides),
-      feature_overrides: cleanOverride(overrideRow?.feature_overrides),
-      page_overrides: cleanOverride(overrideRow?.page_overrides),
+      permission_overrides: overrideOrDefault(overrideRow?.permission_overrides),
+      feature_overrides: overrideOrDefault(overrideRow?.feature_overrides),
+      page_overrides: overrideOrDefault(overrideRow?.page_overrides),
       plan_id: 'sin_licencia',
       billing_status: authUser.banned_until ? 'inactive' : 'active',
       current_period_start: null,
@@ -83,7 +179,7 @@ async function lookupAccess(serviceClient: any, email: string) {
     });
   }
 
-  return { rows, auth_user: authUser ? {
+  return { rows, source: lookupSource, auth_user: authUser ? {
     id: authUser.id,
     email: authUser.email,
     created_at: authUser.created_at,
@@ -119,24 +215,23 @@ async function upsertPlatformOverride(serviceClient: any, email: string, patch: 
   return { ok: true, email, status, permission_overrides: permissionOverrides, feature_overrides: featureOverrides, page_overrides: pageOverrides };
 }
 
-
 async function logAdminEvent(serviceClient: any, actor: any, targetEmail: string, action: string, metadata: Record<string, unknown> = {}) {
   try {
     await serviceClient.from('platform_auth_admin_events').insert({
       actor_user_id: actor?.id || null,
       actor_email: normalizeEmail(actor?.email),
-      target_email: targetEmail,
+      target_email: targetEmail || normalizeEmail(actor?.email),
       action,
       metadata
     });
   } catch (error) {
-    console.warn('No se pudo registrar auditoría de administración Auth:', error?.message || error);
+    console.warn('No se pudo registrar auditoría de administración Auth:', nonFatalError(error));
   }
 }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-  if (req.method !== 'POST') return jsonResponse({ error: 'Método no permitido.' }, 405);
+  if (req.method !== 'POST') return jsonResponse({ ok: false, error: 'Método no permitido.' }, 405);
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -154,15 +249,20 @@ Deno.serve(async (req) => {
     const action = String(body.action || '').trim();
     const email = normalizeEmail(body.email);
 
-    if (!action) return jsonResponse({ error: 'action es requerido.' }, 400);
-    if (action !== 'list' && !email) return jsonResponse({ error: 'email es requerido.' }, 400);
+    if (!action) return jsonResponse({ ok: false, error: 'action es requerido.' }, 400);
+    if (['health', 'ping'].includes(action)) {
+      await logAdminEvent(serviceClient, auth.user, normalizeEmail(auth.user?.email), 'health', { ok: true });
+      return jsonResponse({ ok: true, service: 'platform-admin-users', actor: normalizeEmail(auth.user?.email), timestamp: new Date().toISOString() });
+    }
+    if (action !== 'list' && !email) return jsonResponse({ ok: false, error: 'email es requerido.' }, 400);
     if (email === PLATFORM_SUPERUSER_EMAIL && ['update-global-access', 'disable-auth-user', 'enable-auth-user'].includes(action)) {
-      return jsonResponse({ error: 'El superusuario principal no puede ser modificado.' }, 403);
+      return jsonResponse({ ok: false, error: 'El superusuario principal no puede ser modificado.' }, 403);
     }
 
     if (action === 'lookup') {
       const result = await lookupAccess(serviceClient, email);
-      return jsonResponse(result);
+      await logAdminEvent(serviceClient, auth.user, email, 'lookup', { source: result.source, rows: result.rows.length, auth_found: Boolean(result.auth_user) });
+      return jsonResponse({ ok: true, ...result });
     }
 
     if (action === 'update-global-access') {
@@ -170,12 +270,12 @@ Deno.serve(async (req) => {
       const saved = await upsertPlatformOverride(serviceClient, email, patch, auth.user.id);
       await logAdminEvent(serviceClient, auth.user, email, 'update-global-access', { patch });
       const result = await lookupAccess(serviceClient, email);
-      return jsonResponse({ ...saved, ...result });
+      return jsonResponse({ ok: true, ...saved, ...result });
     }
 
     if (action === 'disable-auth-user' || action === 'enable-auth-user') {
       const authUser = await findAuthUserByEmail(serviceClient, email);
-      if (!authUser) return jsonResponse({ error: 'Usuario Auth no encontrado.' }, 404);
+      if (!authUser) return jsonResponse({ ok: false, error: 'Usuario Auth no encontrado.' }, 404);
       if (action === 'disable-auth-user') {
         const { error } = await serviceClient.auth.admin.updateUserById(authUser.id, { ban_duration: '876000h' });
         if (error) throw error;
@@ -188,7 +288,7 @@ Deno.serve(async (req) => {
         await logAdminEvent(serviceClient, auth.user, email, 'enable-auth-user', { auth_user_id: authUser.id });
       }
       const result = await lookupAccess(serviceClient, email);
-      return jsonResponse(result);
+      return jsonResponse({ ok: true, ...result });
     }
 
     if (action === 'send-recovery') {
@@ -199,9 +299,9 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true, message: 'Correo de recuperación solicitado desde Supabase Auth.' });
     }
 
-    return jsonResponse({ error: 'Acción no soportada.' }, 400);
+    return jsonResponse({ ok: false, error: 'Acción no soportada.' }, 400);
   } catch (error) {
     console.error(error);
-    return jsonResponse({ error: error.message || 'Error de administración global de usuarios.' }, 400);
+    return jsonResponse({ ok: false, error: nonFatalError(error), service: 'platform-admin-users' }, 400);
   }
 });
