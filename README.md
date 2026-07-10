@@ -402,3 +402,34 @@ Notas:
 - El Superusuario principal no puede ser desactivado, degradado ni limitado desde la interfaz.
 - El botón “Desactivar login Auth” bloquea el acceso del usuario a Supabase Auth.
 - Los overrides globales se aplican por correo y afectan pantallas, módulos y permisos cuando ese usuario inicia sesión.
+
+## Fase 10S — Correcciones QA críticas
+
+Entrega incremental basada en el reporte QA 2026-07-10.
+
+Incluye:
+
+- Corrección responsive móvil para evitar overflow horizontal global, especialmente en Diagnóstico y tablas.
+- Navegación lateral compacta en móvil con scroll horizontal interno.
+- Fallback visible para Copiar diagnóstico cuando `navigator.clipboard` no está disponible o es bloqueado por permisos.
+- Normalización de estado `trialing` / `on_trial` hacia `trial` en frontend y SQL.
+- SQL consolidado para que `platform-admin-users` tenga sus dependencias mínimas: `platform_user_overrides`, `platform_auth_admin_events`, `platform_superuser_email`, `is_platform_superuser` y `platform_lookup_user_access`.
+- Diagnóstico muestra el último error de `platform-admin-users` si la Edge Function responde con error.
+
+Archivo SQL nuevo:
+
+`supabase/schema_phase10s_qa_fixes.sql`
+
+Ejecutar después de Fase 10R o directamente si hubo errores de dependencia con 10Q/10R.
+
+Después de subir archivos, desplegar de nuevo:
+
+```bash
+supabase functions deploy platform-admin-users
+```
+
+Verificaciones realizadas antes de entregar:
+
+- `node --check app.js`
+- revisión de helpers críticos usados por Diagnóstico, Reportes, Ganadero, Referidos y Links públicos
+- validación de existencia de Edge Function `platform-admin-users/index.ts`

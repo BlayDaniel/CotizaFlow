@@ -96,7 +96,7 @@ const ACTION_GATES = {
   billing_manage: { permission: 'billing_manage', feature: 'billing_settings', write: false, route: 'billing' }
 };
 
-const ACTIVE_BILLING_STATUSES = new Set(['active', 'trial', 'trialing', 'on_trial', 'paid']);
+const ACTIVE_BILLING_STATUSES = new Set(['active', 'trial', 'paid']);
 const LIMITED_BILLING_STATUSES = new Set(['past_due']);
 const BLOCKED_BILLING_STATUSES = new Set(['suspended', 'cancelled']);
 
@@ -188,7 +188,7 @@ const defaultCompany = {
   logo_data_url: '',
   plan: 'demo',
   active_plan_id: 'demo',
-  subscription_status: 'trialing',
+  subscription_status: 'trial',
   business_type: 'general',
   default_quote_notes: 'Gracias por considerar nuestra propuesta. Esta cotización está sujeta a disponibilidad y vigencia indicada.',
   default_terms: '',
@@ -1065,7 +1065,7 @@ async function getOrCreateRemoteCompany() {
       tax_rate: 0,
       plan: 'demo',
       active_plan_id: 'demo',
-      subscription_status: 'trialing',
+      subscription_status: 'trial',
       business_type: 'general',
       default_quote_notes: defaultCompany.default_quote_notes
     })
@@ -1261,7 +1261,7 @@ async function seedDefaultTemplates(companyId) {
 }
 
 function getRawBillingStatus() {
-  const stored = String(state.saasEntitlement?.subscription_status || state.billing?.subscription_status || state.billing?.status || state.company?.subscription_status || 'trialing').toLowerCase();
+  const stored = normalizeSubscriptionStatus(state.saasEntitlement?.subscription_status || state.billing?.subscription_status || state.billing?.status || state.company?.subscription_status || 'trial');
   const normalized = normalizeSubscriptionStatus(stored);
   const end = state.billing?.current_period_end || state.company?.plan_current_period_end;
   if ((normalized === 'active' || normalized === 'trial') && end) {
@@ -1272,7 +1272,7 @@ function getRawBillingStatus() {
 }
 
 function normalizeSubscriptionStatus(statusValue) {
-  const status = String(statusValue || 'trialing').toLowerCase();
+  const status = String(statusValue || 'trial').trim().toLowerCase();
   if (['trialing', 'on_trial', 'trial'].includes(status)) return 'trial';
   if (['active', 'paid'].includes(status)) return 'active';
   if (['past_due', 'payment_failed', 'unpaid'].includes(status)) return 'past_due';
@@ -5960,15 +5960,41 @@ function buildDiagnosticSummary() {
   return JSON.stringify(diagnostics, null, 2);
 }
 
-async function copyDiagnosticSummary() {
-  const text = buildDiagnosticSummary();
+async function copyTextWithFallback(text, successMessage = 'Copiado.') {
   try {
-    await navigator.clipboard.writeText(text);
-    toast('Diagnóstico copiado.');
-  } catch (_error) {
-    console.log(text);
-    toast('No se pudo copiar. Revisa la consola.');
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      toast(successMessage);
+      return true;
+    }
+    throw new Error('Clipboard API no disponible en este contexto.');
+  } catch (error) {
+    const existing = document.getElementById('clipboard-fallback-box');
+    if (existing) existing.remove();
+    const box = document.createElement('div');
+    box.id = 'clipboard-fallback-box';
+    box.className = 'clipboard-fallback-modal';
+    box.innerHTML = `
+      <div class="clipboard-fallback-card">
+        <h3>Copiar manualmente</h3>
+        <p>No se pudo escribir en el portapapeles automáticamente. Selecciona el texto y cópialo manualmente.</p>
+        <textarea readonly>${escapeHtml(text)}</textarea>
+        <button class="btn primary" type="button" data-action="close-clipboard-fallback">Cerrar</button>
+      </div>`;
+    document.body.appendChild(box);
+    const textarea = box.querySelector('textarea');
+    if (textarea) {
+      textarea.focus();
+      textarea.select();
+    }
+    console.warn('Clipboard fallback:', error?.message || error);
+    toast('Copia manual disponible en pantalla.');
+    return false;
   }
+}
+
+async function copyDiagnosticSummary() {
+  await copyTextWithFallback(buildDiagnosticSummary(), 'Diagnóstico copiado.');
 }
 
 
@@ -5978,7 +6004,11 @@ async function callPlatformAdminUsers(action, payload = {}) {
   const { data, error } = await supabaseClient.functions.invoke('platform-admin-users', {
     body: { action, ...payload }
   });
-  if (error) throw error;
+  if (error) {
+    const message = error.context?.json?.error || error.message || 'Edge Function platform-admin-users no disponible.';
+    const detail = error.context?.status ? `HTTP ${error.context.status}: ${message}` : message;
+    throw new Error(detail);
+  }
   if (data?.error) throw new Error(data.error);
   return data || {};
 }
@@ -5998,18 +6028,19 @@ async function lookupDiagnosticUser(form) {
       state.diagnosticAuthUser = result.auth_user || null;
       state.diagnosticTargetMemberId = state.diagnosticTargetRows[0]?.member_id || state.diagnosticTargetRows[0]?.id || '';
     } catch (edgeError) {
-      console.warn('Edge Function platform-admin-users no disponible, usando RPC global:', edgeError.message || edgeError);
+      state.lastPlatformAdminError = edgeError.message || String(edgeError);
+      console.warn('Edge Function platform-admin-users no disponible. Se usa RPC global solo como respaldo autenticado:', state.lastPlatformAdminError);
       try {
         const { data, error } = await supabaseClient.rpc('platform_lookup_user_access', { lookup_email: email });
         if (error) throw error;
         state.diagnosticTargetRows = data || [];
         state.diagnosticTargetMemberId = state.diagnosticTargetRows[0]?.member_id || state.diagnosticTargetRows[0]?.id || '';
-        toast('Para buscar usuarios Auth sin empresa despliega la Edge Function platform-admin-users.');
+        toast('Edge Function no disponible. Se usó RPC global para membresías existentes.');
       } catch (error) {
         console.warn('Búsqueda global no disponible, usando Roles actuales:', error.message || error);
         const localRows = (state.teamMembers || []).filter(member => normalizeEmail(member.email) === email);
         state.diagnosticTargetRows = localRows.map(member => ({ ...member, member_id: member.id, company_name: state.company?.name, company_plan: state.company?.plan, subscription_status: getRawBillingStatus() }));
-        toast('Ejecuta schema_phase10q_global_license_access.sql o despliega platform-admin-users.');
+        toast('Ejecuta schema_phase10s_qa_fixes.sql y revisa platform-admin-users.');
       }
     }
   } else {
@@ -6369,6 +6400,7 @@ function renderDiagnostics() {
           ${diagnosticRow('Links públicos', diagnosticBadge(typeof createPublicQuoteLink === 'function'), 'Cotizaciones públicas por token')}
           ${diagnosticRow('Vista pública', diagnosticBadge(true), 'public.html?t=TOKEN')}
           ${diagnosticRow('Edge Functions', diagnosticBadge(Boolean(config.supabaseUrl), true), 'create-public-quote-link, get-public-quote, quote-public-action, platform-admin-users')}
+          ${state.lastPlatformAdminError ? diagnosticRow('platform-admin-users último error', '<span class="badge rejected">Revisar</span>', escapeHtml(state.lastPlatformAdminError)) : ''}
         </tbody></table></div>
       </div>
     </section>
@@ -7849,6 +7881,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'export-commercial-report-csv') await exportCommercialReportCsv();
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
     if (action === 'copy-diagnostic-summary') await copyDiagnosticSummary();
+    if (action === 'close-clipboard-fallback') document.getElementById('clipboard-fallback-box')?.remove();
     if (action === 'deactivate-global-user') await setGlobalUserStatus(target.dataset.id, 'inactive');
     if (action === 'activate-global-user') await setGlobalUserStatus(target.dataset.id, 'active');
     if (action === 'disable-auth-user') await setAuthUserLoginStatus(target.dataset.email, false);
