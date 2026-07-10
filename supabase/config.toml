@@ -1,0 +1,2 @@
+[functions.platform-admin-users]
+verify_jwt = false
