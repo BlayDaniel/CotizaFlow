@@ -125,6 +125,7 @@ let state = {
   invoices: [],
   invoiceStorageMode: 'local',
   billing: null,
+  billingEvents: [],
   saasEntitlement: null,
   affiliate: null,
   referrals: [],
@@ -180,7 +181,16 @@ const defaultCompany = {
   fiscal_integration_status: 'not_enabled',
   fiscal_provider: '',
   default_fiscal_receipt_type: 'none',
-  invoice_fiscal_mode: 'commercial_internal'
+  invoice_fiscal_mode: 'commercial_internal',
+  payment_provider: 'manual',
+  current_period_start: '',
+  plan_current_period_end: '',
+  next_billing_date: '',
+  last_payment_status: '',
+  manual_payment_method: '',
+  billing_internal_notes: '',
+  setup_fee_amount: 0,
+  setup_status: 'not_required'
 };
 
 const localDefaultState = {
@@ -191,6 +201,7 @@ const localDefaultState = {
   invoices: [],
   invoiceStorageMode: 'local',
   billing: null,
+  billingEvents: [],
   saasEntitlement: null,
   affiliate: null,
   referrals: [],
@@ -1095,7 +1106,14 @@ async function seedDefaultTemplates(companyId) {
 }
 
 function getRawBillingStatus() {
-  return String(state.saasEntitlement?.subscription_status || state.billing?.status || state.billing?.subscription_status || state.company?.subscription_status || 'trialing').toLowerCase();
+  const stored = String(state.saasEntitlement?.subscription_status || state.billing?.subscription_status || state.billing?.status || state.company?.subscription_status || 'trialing').toLowerCase();
+  const normalized = normalizeSubscriptionStatus(stored);
+  const end = state.billing?.current_period_end || state.company?.plan_current_period_end;
+  if ((normalized === 'active' || normalized === 'trial') && end) {
+    const endTime = new Date(end).getTime();
+    if (!Number.isNaN(endTime) && endTime < Date.now()) return 'past_due';
+  }
+  return stored;
 }
 
 function normalizeSubscriptionStatus(statusValue) {
@@ -1455,6 +1473,152 @@ function planStatusText() {
   const plan = getEffectivePlan();
   const rawStatus = getRawBillingStatus();
   return `${plan.name} · ${normalizeSubscriptionStatus(rawStatus)}`;
+}
+
+function safeDateOnly(value) {
+  if (!value) return '';
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+
+function displayDate(value, fallback = 'Pendiente') {
+  const date = safeDateOnly(value);
+  return date || fallback;
+}
+
+function daysUntil(value) {
+  const date = safeDateOnly(value);
+  if (!date) return null;
+  const target = new Date(`${date}T23:59:59`);
+  if (Number.isNaN(target.getTime())) return null;
+  return Math.ceil((target.getTime() - Date.now()) / 86400000);
+}
+
+function getBillingSnapshot() {
+  const planKey = getEffectivePlanKey();
+  const catalogPlan = getEffectivePlan();
+  const rawStatus = getRawBillingStatus();
+  const status = normalizeSubscriptionStatus(rawStatus);
+  const currentPeriodStart = state.billing?.current_period_start || state.company?.current_period_start || '';
+  const currentPeriodEnd = state.billing?.current_period_end || state.company?.plan_current_period_end || '';
+  const nextBillingDate = state.billing?.next_billing_date || state.company?.next_billing_date || currentPeriodEnd || '';
+  const paymentProvider = state.billing?.payment_provider || state.company?.payment_provider || config.billingProvider || 'manual';
+  const manualPaymentMethod = state.billing?.manual_payment_method || state.company?.manual_payment_method || '';
+  const lastPaymentStatus = state.billing?.last_payment_status || state.company?.last_payment_status || '';
+  const internalNotes = state.billing?.internal_notes || state.company?.billing_internal_notes || '';
+  const setupFeeAmount = Number(state.billing?.setup_fee_amount ?? state.company?.setup_fee_amount ?? 0);
+  const setupStatus = state.billing?.setup_status || state.company?.setup_status || 'not_required';
+  const remainingDays = daysUntil(currentPeriodEnd || nextBillingDate);
+  return { planKey, plan: catalogPlan, rawStatus, status, currentPeriodStart, currentPeriodEnd, nextBillingDate, paymentProvider, manualPaymentMethod, lastPaymentStatus, internalNotes, setupFeeAmount, setupStatus, remainingDays };
+}
+
+function subscriptionStatusLabel(status = normalizeSubscriptionStatus(getRawBillingStatus())) {
+  return ({ trial: 'Prueba', active: 'Activo', past_due: 'Pago pendiente', suspended: 'Suspendido', cancelled: 'Cancelado' })[status] || status;
+}
+
+function subscriptionStatusClass(status = normalizeSubscriptionStatus(getRawBillingStatus())) {
+  if (status === 'active' || status === 'trial') return 'success';
+  if (status === 'past_due') return 'warning';
+  if (status === 'suspended' || status === 'cancelled') return 'danger';
+  return 'muted';
+}
+
+function billingHealthText(snapshot = getBillingSnapshot()) {
+  if (snapshot.status === 'suspended') return 'Cuenta suspendida. El sistema queda en solo lectura hasta registrar pago o reactivar el plan.';
+  if (snapshot.status === 'cancelled') return 'Cuenta cancelada. Puedes consultar datos existentes y acceder a Planes y pagos.';
+  if (snapshot.status === 'past_due') return 'Pago pendiente. Conviene regularizar antes de suspender la operación.';
+  if (snapshot.status === 'trial') return 'Prueba activa con límites. Actualiza antes de operar una empresa real.';
+  if (snapshot.remainingDays !== null && snapshot.remainingDays <= 5) return `Plan activo. La próxima renovación vence en ${snapshot.remainingDays} día${snapshot.remainingDays === 1 ? '' : 's'}.`;
+  return 'Plan activo. La operación comercial puede continuar según los límites contratados.';
+}
+
+function renderBillingHealthCard() {
+  const snapshot = getBillingSnapshot();
+  const badgeClass = subscriptionStatusClass(snapshot.status);
+  const daysText = snapshot.remainingDays === null ? 'Sin vencimiento definido' : snapshot.remainingDays < 0 ? `${Math.abs(snapshot.remainingDays)} día(s) vencido` : `${snapshot.remainingDays} día(s) restantes`;
+  return `
+    <section class="card billing-health-card ${badgeClass}">
+      <div class="billing-health-top">
+        <div>
+          <span class="badge ${badgeClass}">${escapeHtml(subscriptionStatusLabel(snapshot.status))}</span>
+          <h2>${escapeHtml(snapshot.plan.name)}</h2>
+          <p>${escapeHtml(billingHealthText(snapshot))}</p>
+        </div>
+        <div class="billing-days"><strong>${escapeHtml(daysText)}</strong><span>ciclo actual</span></div>
+      </div>
+      <div class="billing-mini-grid">
+        <div><span>Inicio</span><strong>${escapeHtml(displayDate(snapshot.currentPeriodStart, 'No definido'))}</strong></div>
+        <div><span>Vence</span><strong>${escapeHtml(displayDate(snapshot.currentPeriodEnd, 'No definido'))}</strong></div>
+        <div><span>Próximo pago</span><strong>${escapeHtml(displayDate(snapshot.nextBillingDate, 'Pendiente'))}</strong></div>
+        <div><span>Proveedor</span><strong>${escapeHtml(snapshot.paymentProvider || 'manual')}</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderBillingAdminForm() {
+  if (!can('billing_manage')) return '';
+  const snapshot = getBillingSnapshot();
+  const isSuper = can('users_manage');
+  const disabled = isSuper ? '' : 'disabled';
+  return `
+    <section class="card" style="margin-top:18px;">
+      <h2>Control manual de suscripción</h2>
+      <p class="help">Uso interno mientras se activa Lemon Squeezy o Paddle. Solo el Superusuario debe modificar plan, estado y fechas.</p>
+      <form data-form="billing-manual" class="form-grid two">
+        <div class="field"><label>Plan comercial</label>
+          <select name="plan_id" ${disabled}>
+            ${Object.entries(PLAN_CATALOG).map(([key, plan]) => `<option value="${key}" ${snapshot.planKey === key ? 'selected' : ''}>${escapeHtml(plan.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Estado</label>
+          <select name="subscription_status" ${disabled}>
+            ${['trial','active','past_due','suspended','cancelled'].map(value => `<option value="${value}" ${snapshot.status === value ? 'selected' : ''}>${escapeHtml(subscriptionStatusLabel(value))}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Inicio del periodo</label><input name="current_period_start" type="date" value="${escapeHtml(safeDateOnly(snapshot.currentPeriodStart))}" ${disabled} /></div>
+        <div class="field"><label>Fin del periodo</label><input name="current_period_end" type="date" value="${escapeHtml(safeDateOnly(snapshot.currentPeriodEnd))}" ${disabled} /></div>
+        <div class="field"><label>Próxima facturación</label><input name="next_billing_date" type="date" value="${escapeHtml(safeDateOnly(snapshot.nextBillingDate))}" ${disabled} /></div>
+        <div class="field"><label>Método de pago manual</label><input name="manual_payment_method" value="${escapeHtml(snapshot.manualPaymentMethod)}" placeholder="Transferencia, efectivo, tarjeta, cheque" ${disabled} /></div>
+        <div class="field"><label>Proveedor futuro</label>
+          <select name="payment_provider" ${disabled}>
+            ${['manual','lemon_squeezy','paddle','otro'].map(value => `<option value="${value}" ${String(snapshot.paymentProvider) === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Estado último pago</label>
+          <select name="last_payment_status" ${disabled}>
+            ${['','pending','paid','failed','refunded','manual_confirmed'].map(value => `<option value="${value}" ${String(snapshot.lastPaymentStatus || '') === value ? 'selected' : ''}>${escapeHtml(value || 'Sin registrar')}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Setup</label>
+          <select name="setup_status" ${disabled}>
+            ${['not_required','pending','in_progress','completed'].map(value => `<option value="${value}" ${String(snapshot.setupStatus) === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Monto setup</label><input name="setup_fee_amount" type="number" min="0" step="0.01" value="${escapeHtml(snapshot.setupFeeAmount)}" ${disabled} /></div>
+        <div class="field" style="grid-column:1/-1;"><label>Notas internas</label><textarea name="internal_notes" ${disabled}>${escapeHtml(snapshot.internalNotes)}</textarea></div>
+        ${isSuper ? `<button class="btn primary" type="submit">Guardar estado de plan</button>` : `<p class="help" style="grid-column:1/-1;">Tu rol puede ver planes y pagos, pero solo el Superusuario modifica la suscripción.</p>`}
+      </form>
+    </section>
+  `;
+}
+
+function renderSubscriptionRulesCard() {
+  return `
+    <section class="card" style="margin-top:18px;">
+      <h2>Reglas de acceso por estado</h2>
+      <div class="status-rules-grid">
+        <div><strong>Trial</strong><span>Prueba limitada. No debe usarse como operación completa.</span></div>
+        <div><strong>Active</strong><span>Acceso normal según plan contratado.</span></div>
+        <div><strong>Past due</strong><span>Aviso de pago pendiente. Se permite operar temporalmente.</span></div>
+        <div><strong>Suspended</strong><span>Modo solo lectura; permite planes, pagos y consulta.</span></div>
+        <div><strong>Cancelled</strong><span>Modo solo lectura; bloquea nuevas operaciones.</span></div>
+      </div>
+    </section>
+  `;
 }
 
 function getRoute() {
@@ -4907,18 +5071,19 @@ function renderIntegrations() {
 function renderBilling() {
   const usage = getPlanUsage();
   const provider = config.billingProvider || 'manual / lemon_squeezy';
-  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  const snapshot = getBillingSnapshot();
   return `
     <div class="page-header">
       <div>
         <h1>Planes y pagos</h1>
-        <p>Plan actual, límites, estado de suscripción y opciones de actualización.</p>
+        <p>Plan actual, límites, estado de suscripción, pagos manuales y actualización comercial.</p>
       </div>
       <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
     </div>
 
     ${renderConfigNav('billing')}
 
+    <div style="margin-top:18px;">${renderBillingHealthCard()}</div>
     <div style="margin-top:18px;">${renderUsageCard()}</div>
     ${renderDemoLimitCard()}
     ${renderModuleAccessGrid()}
@@ -4928,15 +5093,19 @@ function renderBilling() {
     </section>
 
     <section class="card" style="margin-top:18px;">
-      <h2>Estado de suscripción</h2>
-      <p><strong>Plan efectivo:</strong> ${escapeHtml(usage.plan.name)}</p>
-      <p><strong>Estado:</strong> ${escapeHtml(status)}</p>
-      <p><strong>Proveedor:</strong> ${escapeHtml(state.billing?.payment_provider || state.company?.payment_provider || provider)}</p>
-      <p><strong>Vigencia:</strong> ${escapeHtml(state.billing?.current_period_end || state.company?.plan_current_period_end || 'Sin periodo activo')}</p>
-      <p><strong>Próxima facturación:</strong> ${escapeHtml(state.billing?.next_billing_date || state.company?.next_billing_date || 'Pendiente')}</p>
-      <div class="notice">Este módulo muestra facturas comerciales internas. NCF/e-CF fiscal se implementará después con backend seguro.</div>
-      <p class="help">En esta fase el cambio real de plan debe venir por webhook de pago o ajuste administrativo. El frontend no debe marcar una empresa como pagada.</p>
+      <h2>Resumen de cobro</h2>
+      <div class="billing-mini-grid">
+        <div><span>Plan efectivo</span><strong>${escapeHtml(usage.plan.name)}</strong></div>
+        <div><span>Estado</span><strong>${escapeHtml(subscriptionStatusLabel(snapshot.status))}</strong></div>
+        <div><span>Método manual</span><strong>${escapeHtml(snapshot.manualPaymentMethod || 'Pendiente')}</strong></div>
+        <div><span>Último pago</span><strong>${escapeHtml(snapshot.lastPaymentStatus || 'Sin registrar')}</strong></div>
+      </div>
+      <div class="notice">Este módulo muestra y controla facturas comerciales internas. NCF/e-CF fiscal se implementará después con backend seguro.</div>
+      <p class="help">Cuando se active Lemon Squeezy o Paddle, estos campos podrán alimentarse por webhook. Hasta entonces, el Superusuario puede administrar el plan manualmente.</p>
     </section>
+
+    ${renderBillingAdminForm()}
+    ${renderSubscriptionRulesCard()}
 
     <section class="card" style="margin-top:18px;">
       <h2>Setup e implementación</h2>
@@ -4945,6 +5114,10 @@ function renderBilling() {
         <span>Setup Pro desde RD$12,000.</span>
         <span>Implementación ganadera desde RD$25,000.</span>
         <span>Personalizaciones por paquete cerrado o RD$1,500 a RD$3,500/hora.</span>
+      </div>
+      <div class="actions" style="margin-top:14px;">
+        <a class="btn primary" href="${escapeHtml(salesContactUrl(snapshot.planKey))}" target="_blank" rel="noopener">Contactar ventas</a>
+        <button class="btn secondary" data-route="dashboard">Volver al Dashboard</button>
       </div>
     </section>
   `;
@@ -6014,6 +6187,76 @@ async function startCheckout(planKey) {
   window.location.href = data.url;
 }
 
+async function saveBillingManual(form) {
+  if (!requirePermission('billing_manage')) return;
+  if (!can('users_manage')) {
+    toast('Solo el Superusuario puede modificar el estado de suscripción.');
+    return;
+  }
+  const fd = new FormData(form);
+  const planId = normalizePlanKey(fd.get('plan_id'));
+  const plan = PLAN_CATALOG[planId] || PLAN_CATALOG.demo;
+  const status = normalizeSubscriptionStatus(fd.get('subscription_status'));
+  const periodStart = safeDateOnly(fd.get('current_period_start')) || null;
+  const periodEnd = safeDateOnly(fd.get('current_period_end')) || null;
+  const nextBillingDate = safeDateOnly(fd.get('next_billing_date')) || periodEnd || null;
+  const payload = {
+    company_id: state.company.id,
+    plan: planId,
+    plan_id: planId,
+    plan_name: plan.name,
+    status,
+    subscription_status: status,
+    payment_provider: String(fd.get('payment_provider') || 'manual').trim(),
+    current_period_start: periodStart,
+    current_period_end: periodEnd,
+    next_billing_date: nextBillingDate,
+    last_payment_status: String(fd.get('last_payment_status') || '').trim(),
+    manual_payment_method: String(fd.get('manual_payment_method') || '').trim(),
+    internal_notes: String(fd.get('internal_notes') || '').trim(),
+    setup_status: String(fd.get('setup_status') || 'not_required').trim(),
+    setup_fee_amount: Number(fd.get('setup_fee_amount') || 0),
+    updated_at: new Date().toISOString()
+  };
+  const companyPayload = {
+    plan: planId,
+    active_plan_id: planId,
+    subscription_status: status,
+    payment_provider: payload.payment_provider,
+    current_period_start: periodStart,
+    plan_current_period_end: periodEnd,
+    next_billing_date: nextBillingDate,
+    last_payment_status: payload.last_payment_status,
+    manual_payment_method: payload.manual_payment_method,
+    billing_internal_notes: payload.internal_notes,
+    setup_status: payload.setup_status,
+    setup_fee_amount: payload.setup_fee_amount,
+    updated_at: new Date().toISOString()
+  };
+
+  if (mode === 'supabase') {
+    let billingResult;
+    if (state.billing?.id) {
+      billingResult = await supabaseClient.from('billing_subscriptions').update(payload).eq('id', state.billing.id).select('*').single();
+    } else {
+      billingResult = await supabaseClient.from('billing_subscriptions').insert(payload).select('*').single();
+    }
+    if (billingResult.error) throw billingResult.error;
+    state.billing = billingResult.data;
+    const { data: companyData, error: companyError } = await supabaseClient.from('companies').update(companyPayload).eq('id', state.company.id).select('*').single();
+    if (companyError) throw companyError;
+    state.company = normalizeCompany(companyData);
+    await loadSaasEntitlement();
+  } else {
+    state.billing = { ...(state.billing || {}), ...payload, id: state.billing?.id || uid('billing') };
+    state.company = { ...state.company, ...companyPayload };
+    saveLocalState();
+  }
+  toast('Estado de plan guardado.');
+  setRoute('billing');
+  render();
+}
+
 async function saveAffiliate(form) {
   if (!requirePermission('affiliates_manage')) return;
   if (mode !== 'supabase') {
@@ -6185,6 +6428,7 @@ app.addEventListener('submit', async (event) => {
     if (type === 'password-reset-code') await handlePasswordResetCode(form);
     if (type === 'password-update') await handleUpdatePassword(form);
     if (type === 'company') await saveCompany(form);
+    if (type === 'billing-manual') await saveBillingManual(form);
     if (type === 'client') await saveClient(form);
     if (type === 'quote') await saveQuote(form);
     if (type === 'affiliate') await saveAffiliate(form);

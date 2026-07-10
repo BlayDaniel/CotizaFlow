@@ -666,3 +666,66 @@ html[data-theme="black"] .badge.danger { background: rgba(153,27,27,.22); color:
 @media (max-width: 640px) {
   .module-access-grid { grid-template-columns: 1fr; }
 }
+
+/* Fase 10H/I - Planes, pagos y estado de suscripción */
+.billing-health-card {
+  border-left: 5px solid var(--primary);
+}
+.billing-health-card.success { border-left-color: #16a34a; }
+.billing-health-card.warning { border-left-color: #f59e0b; }
+.billing-health-card.danger { border-left-color: #dc2626; }
+.billing-health-card.muted { border-left-color: var(--border); }
+.billing-health-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+.billing-days {
+  min-width: 150px;
+  text-align: right;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--soft-bg);
+}
+.billing-days strong {
+  display: block;
+  font-size: 1.15rem;
+}
+.billing-days span {
+  color: var(--muted);
+  font-size: .86rem;
+}
+.billing-mini-grid,
+.status-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.billing-mini-grid > div,
+.status-rules-grid > div {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  background: var(--soft-bg);
+}
+.billing-mini-grid span,
+.status-rules-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: .86rem;
+  margin-bottom: 4px;
+}
+.badge.success { background: rgba(22, 163, 74, .12); color: #15803d; }
+.badge.warning { background: rgba(245, 158, 11, .15); color: #92400e; }
+.badge.danger { background: rgba(220, 38, 38, .12); color: #b91c1c; }
+.badge.muted { background: var(--soft-bg); color: var(--muted); }
+[data-theme="black"] .badge.success { color: #86efac; }
+[data-theme="black"] .badge.warning { color: #fcd34d; }
+[data-theme="black"] .badge.danger { color: #fca5a5; }
+@media (max-width: 720px) {
+  .billing-health-top { flex-direction: column; }
+  .billing-days { width: 100%; text-align: left; }
+}

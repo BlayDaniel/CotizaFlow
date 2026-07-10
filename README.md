@@ -58,3 +58,42 @@ Agregar y ejecutar:
 - `supabase/schema_phase10g_ganadero_premium.sql`
 
 Conservar tu `config.js` real.
+
+## Fase 10H/I v2 — Planes, pagos y estado de suscripción
+
+Entrega incremental segura. No refactoriza todo el sistema y conserva compatibilidad con las tablas actuales.
+
+### Incluye
+
+- Pantalla de Planes y pagos más operativa.
+- Resumen del plan efectivo, estado, fechas de ciclo, próximo pago y proveedor.
+- Control manual de suscripción para Superusuario.
+- Estados comerciales: trial, active, past_due, suspended y cancelled.
+- Modo solo lectura para suspended/cancelled ya conectado con las validaciones internas.
+- Campos preparados para Lemon Squeezy o Paddle: payment_provider, provider_customer_id, provider_subscription_id, current_period_start, current_period_end, last_payment_status y next_billing_date.
+- Reglas visibles para entender qué ocurre con cada estado.
+- SQL incremental: `supabase/schema_phase10hi_billing_subscription_status.sql`.
+
+### Orden recomendado de SQL
+
+1. `schema_phase10a_saas_plans.sql`
+2. `schema_phase10b_superuser_roles.sql`
+3. `schema_phase10c_internal_guards.sql`
+4. `schema_phase10e_demo_limits.sql`
+5. `schema_phase10f_commercial_fiscal_boundary.sql`
+6. `schema_phase10g_ganadero_premium.sql`
+7. `schema_phase10hi_billing_subscription_status.sql`
+
+### Prueba mínima
+
+1. Entrar como Superusuario.
+2. Ir a Configuración > Planes y pagos.
+3. Cambiar plan y estado desde Control manual de suscripción.
+4. Probar `active`, `past_due`, `suspended` y `cancelled`.
+5. Confirmar que suspended/cancelled permiten ver datos, pero bloquean creación o modificación de clientes, cotizaciones, facturas y Control Diario.
+6. Confirmar que un rol no Superusuario no puede modificar el estado de plan.
+
+
+## Corrección v2 SQL
+
+Se corrigió `schema_phase10hi_billing_subscription_status.sql` para usar `saas_plans.id` en lugar de `saas_plans.plan_id`, manteniendo compatibilidad con alias legacy como starter, pro, business y enterprise.
