@@ -752,3 +752,28 @@ html[data-theme="black"] .badge.danger { background: rgba(153,27,27,.22); color:
   margin: 6px 0;
   color: var(--muted);
 }
+
+/* Fase 10O - Diagnóstico interno */
+.check-list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.check-list li {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  font-size: 13px;
+}
+.badge.danger {
+  background: rgba(239, 68, 68, .12);
+  color: #b91c1c;
+  border: 1px solid rgba(239, 68, 68, .22);
+}
+[data-theme="black"] .badge.danger,
+.theme-black .badge.danger {
+  color: #fecaca;
+}

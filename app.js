@@ -2210,6 +2210,7 @@ function renderRoute(route) {
     'commercial-reports': 'reports_read',
     'milk-settlements': 'milk_read',
     'plan-qa': 'users_manage',
+    diagnostics: 'users_manage',
     invoices: 'invoices_read',
     clients: 'clients_read',
     catalog: 'catalog_read',
@@ -2241,6 +2242,7 @@ function renderRoute(route) {
     case 'reports': return renderReports();
     case 'commercial-reports': return renderCommercialReports();
     case 'plan-qa': return renderPlanQaCenter();
+    case 'diagnostics': return renderDiagnostics();
     case 'invoices': return renderInvoices();
     case 'clients': return renderClients();
     case 'catalog': return renderCatalog();
@@ -4394,6 +4396,7 @@ function renderConfigNav(active = 'settings') {
     ['settings', t('company'), 'Empresa, marca, temas y documentos comerciales', 'settings_company'],
     ['billing', t('billing'), 'Suscripción, límites y checkout', 'billing_manage'],
     ['team', t('users'), 'Superusuario, roles y permisos por usuario', 'users_manage'],
+    ['diagnostics', 'Diagnóstico', 'QA interno, permisos, plan y módulos críticos', 'users_manage'],
     ['affiliates', t('affiliates'), 'Código, comisiones y enlace', 'affiliates_manage'],
     ['integrations', t('integrations'), 'Estado técnico y próximos conectores', 'integrations_manage']
   ].filter(([, , , permission]) => can(permission));
@@ -5652,6 +5655,189 @@ function renderIntegrations() {
           <span>Las secret keys quedan solo en Supabase Edge Functions.</span>
           <span>Resend queda pendiente para una fase posterior con dominio propio.</span>
         </div>
+      </div>
+    </section>
+  `;
+}
+
+
+function diagnosticBadge(ok, warn = false) {
+  if (ok) return '<span class="badge success">OK</span>';
+  if (warn) return '<span class="badge warning">Revisar</span>';
+  return '<span class="badge danger">Falla</span>';
+}
+
+function diagnosticRow(label, statusHtml, detail = '') {
+  return `
+    <tr>
+      <td><strong>${escapeHtml(label)}</strong></td>
+      <td>${statusHtml}</td>
+      <td>${escapeHtml(detail || '')}</td>
+    </tr>
+  `;
+}
+
+function moduleDiagnosticRows() {
+  const rows = [
+    ['Dashboard', 'dashboard_basic', can('dashboard_read'), true],
+    ['Seguimiento', 'follow_up', can('reports_read'), true],
+    ['Clientes', 'clients', can('clients_read'), true],
+    ['Cotizaciones', 'quotes', can('quotes_read'), true],
+    ['Facturas comerciales', 'invoices', can('invoices_read'), true],
+    ['Cuentas por cobrar / Reportes comerciales', 'accounts_receivable', can('reports_read'), true],
+    ['Catálogo', 'catalog', can('catalog_read'), true],
+    ['Referidos', 'referrals', can('affiliates_manage'), true],
+    ['Integraciones', 'integrations', can('integrations_manage'), true],
+    ['Usuarios y roles', 'roles_advanced', can('users_manage'), true],
+    ['Ganadero Pro', 'ganadero_module', can('milk_read'), isDairyBusiness()]
+  ];
+  return rows.map(([label, feature, roleAllowed, businessAllowed]) => {
+    const featureAllowed = canUseFeature(feature);
+    const ok = Boolean(roleAllowed && featureAllowed && businessAllowed);
+    const detail = !businessAllowed ? 'No aplica para este tipo de negocio' : `feature=${featureAllowed ? 'sí' : 'no'} · rol=${roleAllowed ? 'sí' : 'no'}`;
+    return diagnosticRow(label, diagnosticBadge(ok, !businessAllowed || !featureAllowed || !roleAllowed), detail);
+  }).join('');
+}
+
+function helperDiagnosticRows() {
+  const helpers = [
+    'hasWritableSubscription',
+    'normalizeQuote',
+    'normalizeQuoteItem',
+    'renderCommissionsTable',
+    'renderCommercialReports',
+    'renderMilkControl',
+    'renderDashboard',
+    'createPublicQuoteLink',
+    'copyPublicLink',
+    'openPublicLink',
+    'getEffectivePlanKey',
+    'canOperateGanadero'
+  ];
+  return helpers.map(name => diagnosticRow(name, diagnosticBadge(typeof window[name] === 'function' || typeof globalThis[name] === 'function' || eval(`typeof ${name}`) === 'function'), 'helper requerido por módulos recientes')).join('');
+}
+
+function buildDiagnosticSummary() {
+  const plan = getEffectivePlan();
+  const usage = getPlanUsage();
+  const diagnostics = {
+    generated_at: new Date().toISOString(),
+    mode,
+    route: getRoute(),
+    company_id: state.company?.id || null,
+    company_name: state.company?.name || null,
+    business_type: state.company?.business_type || null,
+    role: getEffectiveRoleKey(),
+    plan_key: getEffectivePlanKey(),
+    plan_name: plan.name,
+    subscription_status: normalizeSubscriptionStatus(getRawBillingStatus()),
+    writable: hasWritableSubscription(),
+    clients: (state.clients || []).length,
+    quotes: (state.quotes || []).length,
+    invoices: (state.invoices || []).length,
+    milk_records: (state.milkRecords || []).length,
+    usage: Object.fromEntries(Object.entries(usage.resources || {}).map(([key, value]) => [key, { used: value.used, limit: Number.isFinite(value.limit) ? value.limit : 'ilimitado' }]))
+  };
+  return JSON.stringify(diagnostics, null, 2);
+}
+
+async function copyDiagnosticSummary() {
+  const text = buildDiagnosticSummary();
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Diagnóstico copiado.');
+  } catch (_error) {
+    console.log(text);
+    toast('No se pudo copiar. Revisa la consola.');
+  }
+}
+
+function renderDiagnostics() {
+  const plan = getEffectivePlan();
+  const status = normalizeSubscriptionStatus(getRawBillingStatus());
+  const usage = getPlanUsage();
+  const writable = hasWritableSubscription();
+  const requiredSql = [
+    'schema_phase10a_saas_plans.sql',
+    'schema_phase10b_superuser_roles.sql',
+    'schema_phase10c_internal_guards.sql',
+    'schema_phase10e_demo_limits.sql',
+    'schema_phase10f_commercial_fiscal_boundary.sql',
+    'schema_phase10g_ganadero_premium.sql',
+    'schema_phase10hi_billing_subscription_status.sql',
+    'schema_phase10m_referrals_affiliates.sql',
+    'schema_phase10n_secure_public_links.sql'
+  ];
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Diagnóstico del sistema</h1>
+        <p>Revisión interna de sesión, plan, rol, módulos críticos y configuración técnica. Visible solo para Superusuario.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-action="copy-diagnostic-summary">Copiar diagnóstico</button>
+        <button class="btn secondary" data-route="billing">Planes y pagos</button>
+      </div>
+    </div>
+    ${renderConfigNav('diagnostics')}
+
+    <section class="grid cols-4" style="margin-top:18px;">
+      <div class="stat-card"><span>Modo</span><strong>${escapeHtml(mode)}</strong><small>${mode === 'supabase' ? 'Conectado a Supabase' : 'Demo local'}</small></div>
+      <div class="stat-card"><span>Rol</span><strong>${escapeHtml(roleLabel(getEffectiveRoleKey()))}</strong><small>${escapeHtml(getEffectiveRoleKey())}</small></div>
+      <div class="stat-card"><span>Plan efectivo</span><strong>${escapeHtml(plan.name)}</strong><small>${escapeHtml(getEffectivePlanKey())}</small></div>
+      <div class="stat-card"><span>Estado</span><strong>${escapeHtml(status)}</strong><small>${writable ? 'Escritura permitida' : 'Solo lectura'}</small></div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px;">
+      <div class="card">
+        <h2>Salud general</h2>
+        <div class="table-wrap"><table><thead><tr><th>Chequeo</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>
+          ${diagnosticRow('Sesión', diagnosticBadge(Boolean(state.session || mode === 'local')), state.session?.email || 'Demo local')}
+          ${diagnosticRow('Empresa activa', diagnosticBadge(Boolean(state.company?.id || mode === 'local')), state.company?.name || 'Empresa local')}
+          ${diagnosticRow('Suscripción operativa', diagnosticBadge(writable, status === 'past_due'), subscriptionStatusNotice() || 'Sin bloqueo de escritura')}
+          ${diagnosticRow('Tipo Asociación Ganaderos', diagnosticBadge(isDairyBusiness(), true), isDairyBusiness() ? 'Módulo vertical aplicable' : 'No aplica')}
+          ${diagnosticRow('Ganadero habilitado', diagnosticBadge(canOperateGanadero(), isDairyBusiness()), canOperateGanadero() ? 'Plan y rol correctos' : 'Requiere Ganadero Pro/CRM Empresa, tipo de negocio y rol')}
+          ${diagnosticRow('Supabase URL', diagnosticBadge(Boolean(config.supabaseUrl), mode === 'local'), config.supabaseUrl || 'No configurado')}
+          ${diagnosticRow('Publishable key', diagnosticBadge(Boolean(config.supabaseAnonKey), mode === 'local'), config.supabaseAnonKey ? 'Configurada en frontend' : 'No configurada')}
+        </tbody></table></div>
+      </div>
+      <div class="card">
+        <h2>Uso contra límites</h2>
+        <div class="usage-list">
+          ${Object.entries(usage.resources).map(([key, resource]) => `
+            <div class="usage-item">
+              <div><strong>${escapeHtml(resource.label)}</strong><span>${resource.used} / ${Number.isFinite(resource.limit) ? resource.limit : 'Ilimitado'}</span></div>
+              <div class="progress"><span style="width:${Number.isFinite(resource.limit) ? resource.percent : 0}%"></span></div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Acceso por módulo</h2>
+      <div class="table-wrap"><table><thead><tr><th>Módulo</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>${moduleDiagnosticRows()}</tbody></table></div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Helpers críticos de interfaz</h2>
+      <p class="help">Estos chequeos reducen errores tipo “función no definida” antes de seguir agregando módulos.</p>
+      <div class="table-wrap"><table><thead><tr><th>Función</th><th>Estado</th><th>Uso</th></tr></thead><tbody>${helperDiagnosticRows()}</tbody></table></div>
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px;">
+      <div class="card">
+        <h2>SQL esperado</h2>
+        <p class="help">Lista de scripts incrementales que deberían estar aplicados según las fases actuales.</p>
+        <ul class="check-list">${requiredSql.map(file => `<li>${escapeHtml(file)}</li>`).join('')}</ul>
+      </div>
+      <div class="card">
+        <h2>Backend seguro</h2>
+        <div class="table-wrap"><table><tbody>
+          ${diagnosticRow('Links públicos', diagnosticBadge(typeof createPublicQuoteLink === 'function'), 'Cotizaciones públicas por token')}
+          ${diagnosticRow('Vista pública', diagnosticBadge(true), 'public.html?t=TOKEN')}
+          ${diagnosticRow('Edge Functions', diagnosticBadge(Boolean(config.supabaseUrl), true), 'create-public-quote-link, get-public-quote, quote-public-action')}
+        </tbody></table></div>
       </div>
     </section>
   `;
@@ -7128,6 +7314,7 @@ app.addEventListener('click', async (event) => {
     if (action === 'copy-invoice-whatsapp') await copyInvoiceWhatsapp(id);
     if (action === 'export-commercial-report-csv') await exportCommercialReportCsv();
     if (action === 'clear-report-filters') { state.reportFilters = { period: 'all', status: 'all', attention: 'all' }; saveLocalState(); setRoute('reports'); render(); }
+    if (action === 'copy-diagnostic-summary') await copyDiagnosticSummary();
   } catch (error) {
     console.error(error);
     toast(error.message || 'Ocurrió un error.');

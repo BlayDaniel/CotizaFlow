@@ -297,3 +297,19 @@ Estas funciones usan `SUPABASE_URL` y `SUPABASE_ANON_KEY`, variables disponibles
 6. Acepta o rechaza la cotización desde la vista pública.
 7. Regresa a la app y confirma que el estado y los eventos quedan registrados.
 
+
+## Fase 10O — QA, hardening y diagnóstico interno
+
+Esta fase agrega una pantalla de diagnóstico visible solo para Superusuario desde Configuración > Diagnóstico.
+
+Incluye verificación de sesión, empresa, rol, plan efectivo, estado de suscripción, escritura permitida, módulos por feature flag, uso contra límites, helpers críticos de interfaz y checklist de SQL aplicado.
+
+No requiere SQL nuevo. Es una fase de hardening de interfaz y QA para reducir errores como funciones no definidas antes de seguir agregando módulos.
+
+Prueba recomendada:
+
+1. Entrar como Superusuario.
+2. Ir a Configuración > Diagnóstico.
+3. Confirmar que los helpers críticos aparecen en OK.
+4. Confirmar plan, rol, estado y límites.
+5. Copiar diagnóstico si se detecta un error para facilitar soporte.
