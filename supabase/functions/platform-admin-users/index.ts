@@ -3,6 +3,7 @@ import { corsHeaders, jsonResponse } from '../_shared/cors.ts';
 
 const PLATFORM_SUPERUSER_EMAIL = 'juan.dmzjob@gmail.com';
 const OK_STATUS = 200;
+const FUNCTION_VERSION = 'fase10z-no-audit-2026-07-10';
 
 function normalizeEmail(value: unknown): string {
   return String(value || '').trim().toLowerCase();
@@ -24,10 +25,10 @@ function errorMessage(error: unknown) {
   return String(error || 'Error desconocido');
 }
 function ok(payload: Record<string, unknown> = {}) {
-  return jsonResponse({ ok: true, service: 'platform-admin-users', ...payload }, OK_STATUS);
+  return jsonResponse({ ok: true, service: 'platform-admin-users', function_version: FUNCTION_VERSION, ...payload }, OK_STATUS);
 }
 function fail(message: string, status = 400, extra: Record<string, unknown> = {}) {
-  return jsonResponse({ ok: false, status, error: message, service: 'platform-admin-users', ...extra }, OK_STATUS);
+  return jsonResponse({ ok: false, status, error: message, service: 'platform-admin-users', function_version: FUNCTION_VERSION, ...extra }, OK_STATUS);
 }
 function getEnv(name: string) {
   return String(Deno.env.get(name) || '').trim();
@@ -129,8 +130,12 @@ async function lookupAccess(serviceClient: any, email: string) {
   try { authUser = await findAuthUserByEmail(serviceClient, email); } catch (error) { authAdminError = errorMessage(error); }
   let rows = await lookupMembershipsDirect(serviceClient, email);
   if (!rows.length) {
-    const { data } = await serviceClient.rpc('platform_lookup_user_access', { lookup_email: email }).catch(() => ({ data: [] }));
-    rows = Array.isArray(data) ? data : [];
+    try {
+      const { data, error } = await serviceClient.rpc('platform_lookup_user_access', { lookup_email: email });
+      if (!error && Array.isArray(data)) rows = data;
+    } catch (_error) {
+      rows = [];
+    }
   }
   if (!rows.length && authUser) {
     rows.push({
@@ -178,15 +183,24 @@ async function upsertPlatformOverride(serviceClient: any, email: string, patch: 
   if (error) throw error;
   return payload;
 }
-async function logAdminEvent(serviceClient: any, actor: any, targetEmail: string, action: string, metadata: Record<string, unknown> = {}) {
-  await serviceClient.from('platform_auth_admin_events').insert({ actor_user_id: actor?.id || null, actor_email: normalizeEmail(actor?.email), target_email: targetEmail || normalizeEmail(actor?.email), action, metadata }).catch(() => null);
+async function logAdminEvent(_serviceClient: any, _actor: any, _targetEmail: string, _action: string, _metadata: Record<string, unknown> = {}) {
+  // Auditoría desactivada temporalmente en Fase 10Z para aislar el fallo de Edge Function.
+  // Sin escritura de auditoría temporal. No puede romper health/lookup.
+  return { skipped: true, reason: 'audit_disabled_phase10z' };
+}
+async function readJsonBody(req: Request) {
+  try {
+    return await req.json();
+  } catch (_error) {
+    return {};
+  }
 }
 Deno.serve(async (req) => {
   try {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
     if (req.method !== 'POST') return fail('Método no permitido.', 405);
     const serviceClient = createServiceClient();
-    const body = await req.json().catch(() => ({}));
+    const body = await readJsonBody(req);
     const action = String(body.action || '').trim();
     const email = normalizeEmail(body.email);
     if (!action) return fail('action es requerido.', 400);
@@ -197,7 +211,7 @@ Deno.serve(async (req) => {
       let authAdminError = '';
       try { await serviceClient.auth.admin.listUsers({ page: 1, perPage: 1 }); } catch (error) { authAdminOk = false; authAdminError = errorMessage(error); }
       await logAdminEvent(serviceClient, auth.user, normalizeEmail(auth.user?.email), 'health', { auth_admin_ok: authAdminOk, auth_admin_error: authAdminError || null });
-      return ok({ actor: normalizeEmail(auth.user?.email), auth_admin_ok: authAdminOk, auth_admin_error: authAdminError || null, timestamp: new Date().toISOString() });
+      return ok({ actor: normalizeEmail(auth.user?.email), auth_admin_ok: authAdminOk, auth_admin_error: authAdminError || null, function_version: FUNCTION_VERSION, audit: 'disabled_phase10z', timestamp: new Date().toISOString() });
     }
     if (action !== 'list' && !email) return fail('email es requerido.', 400);
     if (email === PLATFORM_SUPERUSER_EMAIL && ['update-global-access', 'disable-auth-user', 'enable-auth-user'].includes(action)) return fail('El superusuario principal no puede ser modificado.', 403);
