@@ -113,3 +113,38 @@ supabase functions deploy platform-admin-users
 ```
 
 Luego probar en Configuración > Diagnóstico > Backend seguro > Probar.
+
+## Fase 10W - Corrección estable de layout y Edge Function administrativa
+
+Esta versión estabiliza dos puntos específicos:
+
+1. Sidebar y layout desktop/móvil.
+   - El sidebar conserva fondo completo en escritorio aunque el contenido haga scroll.
+   - El diagnóstico recupera tarjetas de resumen y listas de uso con estilos propios.
+   - Mobile mantiene tablas con scroll interno sin desbordar el documento.
+
+2. platform-admin-users.
+   - El frontend ahora llama la función con `fetch` directo para obtener el error real si Supabase devuelve estado no-2xx.
+   - Se mantiene `supabase/config.toml` con `verify_jwt = false` para esta función.
+   - La función valida internamente que el usuario sea `juan.dmzjob@gmail.com`.
+
+Despliegue recomendado:
+
+```bat
+supabase functions deploy platform-admin-users --no-verify-jwt
+```
+
+Si tu CLI no acepta `--no-verify-jwt`, deja `supabase/config.toml` en el proyecto y ejecuta:
+
+```bat
+supabase functions deploy platform-admin-users
+```
+
+Verificación:
+
+1. Ejecuta `supabase/schema_phase10u_edge_mobile_layout.sql` si no fue aplicado correctamente.
+2. Despliega la función.
+3. Entra a CotizaFlow con `juan.dmzjob@gmail.com`.
+4. Ve a Configuración > Diagnóstico > Backend seguro > Probar.
+5. En escritorio, desplázate hacia abajo: la columna izquierda debe seguir oscura completa.
+6. En móvil 390px, no debe existir overflow horizontal global.

@@ -5999,26 +5999,41 @@ async function copyDiagnosticSummary() {
 
 
 
+async function getCurrentAccessToken() {
+  if (!supabaseClient?.auth?.getSession) return '';
+  try {
+    const { data } = await supabaseClient.auth.getSession();
+    return data?.session?.access_token || '';
+  } catch (_) {
+    return '';
+  }
+}
+
 async function callPlatformAdminUsers(action, payload = {}) {
   if (mode !== 'supabase' || !supabaseClient) throw new Error('Administración Auth requiere Supabase.');
-  const { data, error } = await supabaseClient.functions.invoke('platform-admin-users', {
-    body: { action, ...payload }
+  if (!config.supabaseUrl) throw new Error('Supabase URL no configurada.');
+  const endpoint = `${String(config.supabaseUrl).replace(/\/$/, '')}/functions/v1/platform-admin-users`;
+  const accessToken = await getCurrentAccessToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    'apikey': config.supabaseAnonKey || ''
+  };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ action, ...payload })
   });
-  if (error) {
-    let message = error.message || 'Edge Function platform-admin-users no disponible.';
-    const ctx = error.context || {};
-    try {
-      if (ctx.json?.error) message = ctx.json.error;
-      else if (ctx.body && typeof ctx.body === 'string') {
-        const parsed = JSON.parse(ctx.body);
-        if (parsed?.error) message = parsed.error;
-      }
-    } catch (_) {}
-    const status = ctx.status || ctx.statusCode;
-    const detail = status ? `HTTP ${status}: ${message}` : message;
-    throw new Error(detail);
+  const raw = await response.text();
+  let data = null;
+  try { data = raw ? JSON.parse(raw) : null; } catch (_) { data = null; }
+  if (!response.ok) {
+    const message = data?.error || data?.message || raw || response.statusText || 'Edge Function returned a non-2xx status code';
+    throw new Error(`HTTP ${response.status}: ${message}`);
   }
-  if (data?.error) throw new Error(data.error);
+  if (data?.ok === false || data?.error) {
+    throw new Error(data.error || data.message || 'Edge Function devolvió ok:false.');
+  }
   return data || {};
 }
 
