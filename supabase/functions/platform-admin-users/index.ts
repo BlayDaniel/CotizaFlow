@@ -129,12 +129,8 @@ async function lookupAccess(serviceClient: any, email: string) {
   try { authUser = await findAuthUserByEmail(serviceClient, email); } catch (error) { authAdminError = errorMessage(error); }
   let rows = await lookupMembershipsDirect(serviceClient, email);
   if (!rows.length) {
-    try {
-      const { data, error } = await serviceClient.rpc('platform_lookup_user_access', { lookup_email: email });
-      if (!error && Array.isArray(data)) rows = data;
-    } catch (_error) {
-      rows = [];
-    }
+    const { data } = await serviceClient.rpc('platform_lookup_user_access', { lookup_email: email }).catch(() => ({ data: [] }));
+    rows = Array.isArray(data) ? data : [];
   }
   if (!rows.length && authUser) {
     rows.push({
@@ -183,32 +179,14 @@ async function upsertPlatformOverride(serviceClient: any, email: string, patch: 
   return payload;
 }
 async function logAdminEvent(serviceClient: any, actor: any, targetEmail: string, action: string, metadata: Record<string, unknown> = {}) {
-  try {
-    const { error } = await serviceClient.from('platform_auth_admin_events').insert({
-      actor_user_id: actor?.id || null,
-      actor_email: normalizeEmail(actor?.email),
-      target_email: targetEmail || normalizeEmail(actor?.email),
-      action,
-      metadata
-    });
-    if (error) console.warn('platform_auth_admin_events insert skipped:', error.message);
-  } catch (error) {
-    console.warn('platform_auth_admin_events insert failed:', errorMessage(error));
-  }
-}
-async function readJsonBody(req: Request) {
-  try {
-    return await req.json();
-  } catch (_error) {
-    return {};
-  }
+  await serviceClient.from('platform_auth_admin_events').insert({ actor_user_id: actor?.id || null, actor_email: normalizeEmail(actor?.email), target_email: targetEmail || normalizeEmail(actor?.email), action, metadata }).catch(() => null);
 }
 Deno.serve(async (req) => {
   try {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
     if (req.method !== 'POST') return fail('Método no permitido.', 405);
     const serviceClient = createServiceClient();
-    const body = await readJsonBody(req);
+    const body = await req.json().catch(() => ({}));
     const action = String(body.action || '').trim();
     const email = normalizeEmail(body.email);
     if (!action) return fail('action es requerido.', 400);
