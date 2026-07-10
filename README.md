@@ -175,3 +175,68 @@ Prueba recomendada:
 6. Abrir Liquidaciones.
 7. Confirmar que el neto final descuenta la factura pendiente.
 8. Generar PDF y CSV.
+
+## Fase 10L v2 — Ajuste de descuentos en liquidación
+
+Corrección aplicada: las liquidaciones ganaderas ahora consideran como descuento operativo las facturas comerciales del productor con saldo pendiente aunque estén en estado borrador, siempre que no estén anuladas. Esto permite ver reflejadas ventas de alimento, insumos o servicios registradas al productor antes de emitir formalmente la factura comercial.
+
+Regla actual:
+- Se descuentan facturas del mismo cliente/productor con saldo pendiente.
+- Se incluyen borradores, emitidas, vencidas y pagadas parciales con saldo.
+- Se excluyen facturas anuladas y facturas ya pagadas sin saldo.
+
+No requiere SQL nuevo.
+
+## Fase 10M — Referidos y afiliados operativos
+
+Entrega incremental y compatible con las tablas actuales. Esta fase convierte el módulo de Referidos en una herramienta operativa del MVP sin automatizar todavía payouts ni pagos desde backend.
+
+### Incluye
+
+- Panel de referidos más claro dentro de Configuración > Referidos.
+- Link de referido con código único.
+- Resumen de referidos, comisiones pendientes, disponibles y pagadas.
+- Reglas visibles del programa: 20% estándar, 30% partner aprobado, 12 meses, liberación a 30 días.
+- Tabla de empresas referidas.
+- Tabla de comisiones.
+- Estado de payout manual y mínimo sugerido.
+- SQL incremental para crear o completar `affiliates`, `referrals` y `commissions`.
+- Funciones seguras:
+  - `create_my_affiliate(requested_code, payout_email)`
+  - `claim_referral(ref_code, target_company_id)`
+  - `register_manual_commission(...)`
+  - `release_available_commissions()`
+
+### SQL nuevo
+
+Ejecutar:
+
+`supabase/schema_phase10m_referrals_affiliates.sql`
+
+Orden recomendado:
+
+1. `schema_phase10a_saas_plans.sql`
+2. `schema_phase10b_superuser_roles.sql`
+3. `schema_phase10c_internal_guards.sql`
+4. `schema_phase10e_demo_limits.sql`
+5. `schema_phase10f_commercial_fiscal_boundary.sql`
+6. `schema_phase10g_ganadero_premium.sql`
+7. `schema_phase10hi_billing_subscription_status.sql`
+8. `schema_phase10m_referrals_affiliates.sql`
+
+### Prueba rápida
+
+1. Entra con una cuenta que tenga acceso a Referidos.
+2. Ve a Configuración > Referidos.
+3. Crea un código de afiliado.
+4. Copia el link.
+5. Abre el link en otra ventana o navegador.
+6. Crea o entra con otra empresa.
+7. Verifica que el referido se registre en la cuenta afiliada.
+
+Las comisiones reales todavía deben registrarse manualmente o luego por webhook de pagos.
+
+
+## Fase 10M v2 - Corrección SQL
+
+Se agregó compatibilidad para bases donde `create_my_affiliate(text,text)` ya existía con otro tipo de retorno. El SQL ahora elimina y recrea solo las funciones RPC necesarias antes de definirlas nuevamente. No elimina datos de afiliados, referidos ni comisiones.

@@ -5195,7 +5195,7 @@ function getProducerInvoiceRowsForMonth(month) {
     .filter(inv => producerIds.has(String(inv.client_id || '')))
     .filter(inv => {
       const status = effectiveInvoiceStatus(inv);
-      if (status === 'draft' || status === 'void') return false;
+      if (status === 'void') return false;
       return invoiceBalance(inv) > 0;
     })
     .map(inv => ({
@@ -5204,7 +5204,8 @@ function getProducerInvoiceRowsForMonth(month) {
       total: invoiceTotals(inv).total,
       paid: invoicePaidAmount(inv),
       balance: invoiceBalance(inv),
-      status: effectiveInvoiceStatus(inv)
+      status: effectiveInvoiceStatus(inv),
+      isDraft: effectiveInvoiceStatus(inv) === 'draft'
     }));
 }
 
@@ -5215,9 +5216,10 @@ function getMilkSettlements(month) {
   const invoiceByClient = new Map();
   invoiceRows.forEach(row => {
     const key = String(row.invoice.client_id || '');
-    if (!invoiceByClient.has(key)) invoiceByClient.set(key, { invoices: 0, total: 0, paid: 0, balance: 0, rows: [] });
+    if (!invoiceByClient.has(key)) invoiceByClient.set(key, { invoices: 0, drafts: 0, total: 0, paid: 0, balance: 0, rows: [] });
     const group = invoiceByClient.get(key);
     group.invoices += 1;
+    if (row.isDraft) group.drafts += 1;
     group.total += row.total;
     group.paid += row.paid;
     group.balance += row.balance;
@@ -5226,11 +5228,12 @@ function getMilkSettlements(month) {
 
   return milkSummary.map(row => {
     const clientKey = String(row.client_id || '');
-    const invoice = invoiceByClient.get(clientKey) || { invoices: 0, total: 0, paid: 0, balance: 0, rows: [] };
+    const invoice = invoiceByClient.get(clientKey) || { invoices: 0, drafts: 0, total: 0, paid: 0, balance: 0, rows: [] };
     const netPayable = Number(row.net || 0) - Number(invoice.balance || 0);
     return {
       ...row,
       invoice_count: invoice.invoices,
+      invoice_draft_count: invoice.drafts || 0,
       invoice_total: invoice.total,
       invoice_paid: invoice.paid,
       invoice_balance: invoice.balance,
@@ -5282,7 +5285,7 @@ function renderMilkSettlements() {
     </div>
 
     <div class="notice info">
-      La liquidación no es una factura fiscal. Es un reporte operativo interno para calcular lo que debe pagarse a cada productor al cierre del mes. Las facturas comerciales pendientes del productor se descuentan del neto de leche.
+      La liquidación no es una factura fiscal. Es un reporte operativo interno para calcular lo que debe pagarse a cada productor al cierre del mes. Las facturas comerciales pendientes del productor se descuentan del neto de leche. Para fines operativos, también se incluyen facturas en borrador con saldo pendiente hasta que sean emitidas, pagadas o anuladas.
     </div>
 
     <section class="grid cols-4 dairy-metrics" style="margin-top:18px;">
@@ -5310,7 +5313,7 @@ function renderMilkSettlements() {
         <div class="bullets">
           <span>Bruto de leche = litros recibidos × precio por litro configurado.</span>
           <span>Neto de leche = bruto de leche - comisión de la asociación.</span>
-          <span>Descuentos = saldo pendiente de facturas comerciales emitidas al productor.</span>
+          <span>Descuentos = saldo pendiente de facturas comerciales del productor, incluyendo borradores operativos no anulados.</span>
           <span>Neto final = neto de leche - descuentos por facturas.</span>
         </div>
       </div>
@@ -5340,7 +5343,7 @@ function renderMilkSettlementTable(rows) {
             <td>${money(row.gross)}</td>
             <td>${money(row.commission)}</td>
             <td>${money(row.net)}</td>
-            <td>${money(row.invoice_balance)}${row.invoice_count ? `<br><span class="help">${row.invoice_count} factura(s)</span>` : ''}</td>
+            <td>${money(row.invoice_balance)}${row.invoice_count ? `<br><span class="help">${row.invoice_count} factura(s)${row.invoice_draft_count ? ` · ${row.invoice_draft_count} borrador(es)` : ''}</span>` : ''}</td>
             <td><strong>${money(row.net_payable)}</strong></td>
             <td>${renderSettlementStatusBadge(row.settlement_status)}</td>
           </tr>
@@ -5744,12 +5747,16 @@ function renderAffiliates() {
   const pending = state.commissions.filter(c => c.status === 'pending').reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const available = state.commissions.filter(c => c.status === 'available').reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const paid = state.commissions.filter(c => c.status === 'paid').reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const minimum = Number(affiliate?.payout_minimum || 25);
+  const rate = Number(affiliate?.commission_rate || 0.2);
+  const months = Number(affiliate?.commission_months || 12);
+  const partnerType = affiliate?.partner_type || affiliate?.type || (rate >= 0.3 ? 'partner' : 'standard');
 
   return `
     <div class="page-header">
       <div>
         <h1>Referidos</h1>
-        <p>Programa de afiliados: 20% recurrente por 12 meses. Partners aprobados pueden llegar a 30%.</p>
+        <p>Programa comercial: 20% recurrente por 12 meses. Partners aprobados pueden recibir 30%.</p>
       </div>
       <div class="header-actions"><button class="btn secondary" data-route="settings">${escapeHtml(t('back'))}</button></div>
     </div>
@@ -5759,22 +5766,57 @@ function renderAffiliates() {
     <div style="margin-top:18px;"></div>
 
     ${affiliate ? `
-      <section class="grid cols-3">
+      <section class="grid cols-4">
         <div class="card metric"><span>Referidos</span><strong>${state.referrals.length}</strong></div>
         <div class="card metric"><span>Pendiente</span><strong>${money(pending)}</strong></div>
         <div class="card metric"><span>Disponible</span><strong>${money(available)}</strong></div>
+        <div class="card metric"><span>Pagado</span><strong>${money(paid)}</strong></div>
       </section>
 
       <section class="card" style="margin-top:18px;">
-        <h2>Tu link de referido</h2>
+        <div class="section-title-row">
+          <div>
+            <h2>Tu link de referido</h2>
+            <p class="help">Comparte este link. Cuando una empresa se registra desde él, queda asociada a tu código.</p>
+          </div>
+          <span class="badge ${affiliate.status === 'approved' || affiliate.status === 'active' ? 'success' : ''}">${escapeHtml(affiliateStatusLabel(affiliate.status))}</span>
+        </div>
         <div class="copy-line"><input readonly value="${escapeHtml(link)}" /><button class="btn secondary" data-action="copy-affiliate-link">Copiar</button></div>
-        <p class="help">Comisión: ${(Number(affiliate.commission_rate || 0.2) * 100).toFixed(0)}% durante ${affiliate.commission_months || 12} meses. Disponible 30 días después del pago confirmado.</p>
+        <div class="billing-mini-grid" style="margin-top:14px;">
+          <div><span>Código</span><strong>${escapeHtml(affiliate.code)}</strong></div>
+          <div><span>Tipo</span><strong>${partnerType === 'partner' ? 'Partner' : 'Afiliado estándar'}</strong></div>
+          <div><span>Comisión</span><strong>${(rate * 100).toFixed(0)}%</strong></div>
+          <div><span>Duración</span><strong>${months} meses</strong></div>
+        </div>
+        <p class="help">La comisión se genera solo cuando el cliente paga. Si hay reembolso, se cancela. Se libera después de 30 días. Pago mínimo sugerido: ${money(minimum)}.</p>
+      </section>
+
+      <section class="grid cols-2" style="margin-top:18px;">
+        <div class="card">
+          <h2>Reglas del programa</h2>
+          <div class="bullets">
+            <span>Afiliado estándar: 20% recurrente por 12 meses.</span>
+            <span>Partner aprobado: 30% recurrente por 12 meses.</span>
+            <span>No hay comisión sobre pruebas gratis.</span>
+            <span>Los payouts siguen manuales en el MVP.</span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Estado de payout</h2>
+          <p>Disponible para solicitar: <strong>${money(available)}</strong></p>
+          <p class="help">Mínimo de pago: ${money(minimum)}. Si todavía no llega al mínimo, se acumula para el próximo corte.</p>
+          <a class="btn ${available >= minimum ? 'primary' : 'secondary'}" href="${escapeHtml(salesContactUrl('referrals'))}" target="_blank" rel="noopener">Solicitar revisión de payout</a>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:18px;">
+        <h2>Referidos registrados</h2>
+        ${state.referrals.length ? renderReferralsTable() : `<div class="empty">Todavía no hay empresas registradas con tu código.</div>`}
       </section>
 
       <section class="card" style="margin-top:18px;">
         <h2>Comisiones</h2>
         ${state.commissions.length ? renderCommissionsTable() : `<div class="empty">Todavía no hay comisiones generadas.</div>`}
-        <p class="help" style="margin-top:12px;">Pagado histórico: ${money(paid)}. Los payouts siguen manuales en el MVP.</p>
       </section>
     ` : `
       <section class="card">
@@ -5784,24 +5826,35 @@ function renderAffiliates() {
           <div class="field"><label>Email de pago</label><input name="payout_email" type="email" placeholder="tu@email.com" /></div>
           <button class="btn primary" type="submit">Crear código de afiliado</button>
         </form>
-        <p class="help">El código queda único. La comisión normal se crea en 20%; subir a Partner 30% se hace manualmente desde Supabase.</p>
+        <p class="help">El código queda único. La comisión normal se crea en 20%; subir a Partner 30% se hace manualmente desde Supabase o desde el panel administrativo futuro.</p>
       </section>
     `}
   `;
 }
 
-function renderCommissionsTable() {
+function affiliateStatusLabel(status) {
+  const labels = { active: 'Activo', approved: 'Aprobado', pending: 'Pendiente', suspended: 'Suspendido', rejected: 'Rechazado' };
+  return labels[status] || 'Activo';
+}
+
+function referralStatusLabel(status) {
+  const labels = { lead: 'Lead', trial: 'Prueba', active: 'Cliente activo', paid: 'Cliente pago', cancelled: 'Cancelado', refunded: 'Reembolsado' };
+  return labels[status] || status || 'Registrado';
+}
+
+function renderReferralsTable() {
   return `
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Fecha</th><th>Monto</th><th>Estado</th><th>Disponible</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Empresa referida</th><th>Estado</th><th>Plan</th><th>Conversión</th></tr></thead>
         <tbody>
-          ${state.commissions.map(c => `
+          ${state.referrals.map(r => `
             <tr>
-              <td>${escapeHtml((c.created_at || '').slice(0, 10))}</td>
-              <td>${money(c.amount)}</td>
-              <td>${escapeHtml(c.status)}</td>
-              <td>${escapeHtml((c.available_at || '').slice(0, 10))}</td>
+              <td>${escapeHtml((r.created_at || '').slice(0, 10))}</td>
+              <td>${escapeHtml(r.referred_company_name || r.company_name || r.referred_email || r.referred_company_id || 'Empresa registrada')}</td>
+              <td><span class="badge">${escapeHtml(referralStatusLabel(r.status))}</span></td>
+              <td>${escapeHtml(r.plan_id || r.plan || 'Pendiente')}</td>
+              <td>${escapeHtml((r.converted_at || r.first_payment_at || '').slice(0, 10) || 'Pendiente')}</td>
             </tr>
           `).join('')}
         </tbody>
