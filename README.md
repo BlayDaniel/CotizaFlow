@@ -129,3 +129,49 @@ Corrección incremental sobre Fase 10JK v3.
 - No requiere SQL nuevo.
 
 Actualización recomendada: conservar `config.js` real y reemplazar `app.js` y `README.md`.
+
+## Fase 10L - Liquidación ganadera
+
+Entrega incremental sobre Fase 10JK v4. No requiere SQL nuevo.
+
+Objetivo:
+- Separar la operación ganadera en tres conceptos: entregas de leche, facturas comerciales al productor y liquidación mensual.
+- Evitar mezclar leche recibida con facturas comerciales.
+- Dar a Ganadero Pro una función de mayor valor para cierre mensual.
+
+Incluye:
+- Nuevo módulo `Liquidaciones` visible para Asociación Ganaderos con Ganadero Pro o CRM Empresa.
+- Cálculo mensual por productor:
+  - Litros recibidos.
+  - Bruto de leche.
+  - Comisión de la asociación.
+  - Neto de leche.
+  - Facturas comerciales pendientes del productor.
+  - Neto final a pagar.
+- Estados de liquidación:
+  - Pagar al productor.
+  - Productor debe saldo.
+  - Cerrado.
+- PDF de liquidación mensual.
+- CSV de liquidación mensual.
+- Botón desde Control Diario hacia Liquidación mensual.
+
+Regla operativa:
+- Control Diario registra leche recibida y genera cuenta por pagar al productor.
+- Facturas comerciales registran ventas de alimento, medicina, transporte, veterinaria u otros servicios al productor.
+- Liquidación mensual descuenta las facturas pendientes contra el neto de leche.
+
+Actualización:
+- Conservar `config.js` real.
+- Reemplazar `app.js`, `styles.css` y `README.md`.
+- No ejecutar SQL nuevo.
+
+Prueba recomendada:
+1. Configurar empresa como Asociación Ganaderos.
+2. Activar plan Ganadero Pro.
+3. Crear un productor desde Clientes o Control Diario.
+4. Registrar entregas de leche para ese productor.
+5. Crear una factura comercial pendiente al mismo productor por alimento u otro insumo.
+6. Abrir Liquidaciones.
+7. Confirmar que el neto final descuenta la factura pendiente.
+8. Generar PDF y CSV.

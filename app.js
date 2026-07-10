@@ -2138,6 +2138,7 @@ function renderApp(route) {
           ${can('reports_read') ? navLink('reports', t('followup')) : ''}
           ${can('reports_read') ? navLink(canUseFeature('accounts_receivable') ? 'commercial-reports' : 'commercial-reports', 'Reportes' + (canUseFeature('accounts_receivable') ? '' : ' 🔒')) : ''}
           ${renderMilkNavLink()}
+          ${renderMilkSettlementNavLink()}
           ${can('quotes_read') ? navLink('quotes', t('quotes')) : ''}
           ${can('invoices_read') ? navLink(canUseFeature('invoices') ? 'invoices' : 'invoices-upgrade', t('invoices') + (canUseFeature('invoices') ? '' : ' 🔒')) : ''}
           ${can('clients_read') ? navLink('clients', t('clients')) : ''}
@@ -2166,6 +2167,13 @@ function renderMilkNavLink() {
   if (!can('milk_read')) return '';
   if (canOperateGanadero()) return navLink('milk', t('milkControl'));
   return navLink('ganadero-upgrade', `${t('milkControl')} 🔒`);
+}
+
+function renderMilkSettlementNavLink() {
+  if (!isDairyBusiness()) return '';
+  if (!can('milk_read')) return '';
+  if (canOperateGanadero() && canUseFeature('ganadero_monthly_summary')) return navLink('milk-settlements', 'Liquidaciones');
+  return navLink('ganadero-upgrade', 'Liquidaciones 🔒');
 }
 
 function safeRenderRoute(route) {
@@ -2200,6 +2208,7 @@ function renderRoute(route) {
     'quote-new': 'quotes_write',
     reports: 'reports_read',
     'commercial-reports': 'reports_read',
+    'milk-settlements': 'milk_read',
     'plan-qa': 'users_manage',
     invoices: 'invoices_read',
     clients: 'clients_read',
@@ -2215,6 +2224,7 @@ function renderRoute(route) {
   const permission = routePermissions[route];
   if (permission && !can(permission)) return renderAccessDenied();
   if (route === 'milk' && !canOperateGanadero()) return renderGanaderoUpgrade();
+  if (route === 'milk-settlements' && (!canOperateGanadero() || !canUseFeature('ganadero_monthly_summary'))) return renderGanaderoUpgrade();
   if (route === 'invoices' && !canUseFeature('invoices')) return renderFeatureLocked('invoices', 'Facturas comerciales no incluidas');
   if (route === 'quote-new' && !evaluateActionGate('quote_create').ok) return renderActionLocked('quote_create', {}, 'No puedes crear otra cotización');
   if (route === 'catalog' && !canUseFeature('catalog')) return renderFeatureLocked('catalog', 'Catálogo no incluido');
@@ -2236,6 +2246,7 @@ function renderRoute(route) {
     case 'catalog': return renderCatalog();
     case 'templates': return renderTemplates();
     case 'milk': return renderMilkControl();
+    case 'milk-settlements': return renderMilkSettlements();
     case 'settings': return renderSettings();
     case 'billing': return renderBilling();
     case 'affiliates': return renderAffiliates();
@@ -4817,6 +4828,7 @@ function renderMilkControl() {
         <p>Registra la llegada diaria por productor, calcula comisión y genera el cierre mensual imprimible.</p>
       </div>
       <div class="header-actions">
+        <button class="btn secondary" data-route="milk-settlements">Liquidación mensual</button>
         ${can('milk_export') && canUseFeature('ganadero_csv') ? `<button class="btn secondary" data-action="milk-csv">Exportar CSV</button>` : `<button class="btn secondary" data-route="billing">CSV en Ganadero Pro</button>`}
         ${can('milk_export') && canUseFeature('ganadero_pdf') ? `<button class="btn primary" data-action="milk-pdf">PDF mensual</button>` : `<button class="btn primary" data-route="billing">PDF en Ganadero Pro</button>`}
       </div>
@@ -5172,6 +5184,257 @@ function exportMilkCsv() {
   a.remove();
   URL.revokeObjectURL(url);
   toast('CSV generado.');
+}
+
+
+function getProducerInvoiceRowsForMonth(month) {
+  const selected = month || state.milkFilters?.month || currentMonthValue();
+  const producerIds = new Set((state.milkRecords || []).filter(record => String(record.delivery_date || '').startsWith(selected)).map(record => String(record.client_id || '')).filter(Boolean));
+  return (state.invoices || [])
+    .map(inv => normalizeInvoice(inv))
+    .filter(inv => producerIds.has(String(inv.client_id || '')))
+    .filter(inv => {
+      const status = effectiveInvoiceStatus(inv);
+      if (status === 'draft' || status === 'void') return false;
+      return invoiceBalance(inv) > 0;
+    })
+    .map(inv => ({
+      invoice: inv,
+      client: getClient(inv.client_id),
+      total: invoiceTotals(inv).total,
+      paid: invoicePaidAmount(inv),
+      balance: invoiceBalance(inv),
+      status: effectiveInvoiceStatus(inv)
+    }));
+}
+
+function getMilkSettlements(month) {
+  const records = getMilkRecordsForMonth(month);
+  const milkSummary = summarizeMilkByProducer(records);
+  const invoiceRows = getProducerInvoiceRowsForMonth(month);
+  const invoiceByClient = new Map();
+  invoiceRows.forEach(row => {
+    const key = String(row.invoice.client_id || '');
+    if (!invoiceByClient.has(key)) invoiceByClient.set(key, { invoices: 0, total: 0, paid: 0, balance: 0, rows: [] });
+    const group = invoiceByClient.get(key);
+    group.invoices += 1;
+    group.total += row.total;
+    group.paid += row.paid;
+    group.balance += row.balance;
+    group.rows.push(row);
+  });
+
+  return milkSummary.map(row => {
+    const clientKey = String(row.client_id || '');
+    const invoice = invoiceByClient.get(clientKey) || { invoices: 0, total: 0, paid: 0, balance: 0, rows: [] };
+    const netPayable = Number(row.net || 0) - Number(invoice.balance || 0);
+    return {
+      ...row,
+      invoice_count: invoice.invoices,
+      invoice_total: invoice.total,
+      invoice_paid: invoice.paid,
+      invoice_balance: invoice.balance,
+      net_payable: netPayable,
+      settlement_status: netPayable > 0 ? 'pay_producer' : netPayable < 0 ? 'producer_owes' : 'closed',
+      invoice_rows: invoice.rows
+    };
+  }).sort((a, b) => b.net_payable - a.net_payable);
+}
+
+function settlementStatusLabel(status) {
+  return {
+    pay_producer: 'Pagar al productor',
+    producer_owes: 'Productor debe saldo',
+    closed: 'Cerrado'
+  }[String(status || '')] || 'Pendiente';
+}
+
+function renderSettlementStatusBadge(status) {
+  const css = { pay_producer: 'accepted', producer_owes: 'warning', closed: 'sent' }[String(status || '')] || 'draft';
+  return `<span class="badge ${escapeHtml(css)}">${escapeHtml(settlementStatusLabel(status))}</span>`;
+}
+
+function renderMilkSettlements() {
+  if (!canOperateGanadero() || !canUseFeature('ganadero_monthly_summary')) return renderGanaderoUpgrade();
+  const month = state.milkFilters?.month || currentMonthValue();
+  const settlements = getMilkSettlements(month);
+  const totals = settlements.reduce((acc, row) => {
+    acc.liters += Number(row.liters || 0);
+    acc.gross += Number(row.gross || 0);
+    acc.commission += Number(row.commission || 0);
+    acc.milkNet += Number(row.net || 0);
+    acc.invoiceBalance += Number(row.invoice_balance || 0);
+    acc.netPayable += Number(row.net_payable || 0);
+    return acc;
+  }, { liters: 0, gross: 0, commission: 0, milkNet: 0, invoiceBalance: 0, netPayable: 0 });
+
+  return `
+    <div class="page-header">
+      <div>
+        <h1>Liquidaciones ganaderas</h1>
+        <p>Cierre mensual por productor: leche recibida menos comisión de la asociación y menos facturas comerciales pendientes por insumos o servicios.</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn secondary" data-route="milk">Control Diario</button>
+        ${can('milk_export') && canUseFeature('ganadero_csv') ? `<button class="btn secondary" data-action="milk-settlement-csv">Exportar CSV</button>` : `<button class="btn secondary" data-route="billing">CSV en Ganadero Pro</button>`}
+        ${can('milk_export') && canUseFeature('ganadero_pdf') ? `<button class="btn primary" data-action="milk-settlement-pdf">PDF liquidación</button>` : `<button class="btn primary" data-route="billing">PDF en Ganadero Pro</button>`}
+      </div>
+    </div>
+
+    <div class="notice info">
+      La liquidación no es una factura fiscal. Es un reporte operativo interno para calcular lo que debe pagarse a cada productor al cierre del mes. Las facturas comerciales pendientes del productor se descuentan del neto de leche.
+    </div>
+
+    <section class="grid cols-4 dairy-metrics" style="margin-top:18px;">
+      <div class="card metric"><span>Litros liquidados</span><strong>${numberFmt(totals.liters, 2)}</strong></div>
+      <div class="card metric"><span>Neto de leche</span><strong>${money(totals.milkNet)}</strong></div>
+      <div class="card metric"><span>Descuentos por facturas</span><strong>${money(totals.invoiceBalance)}</strong></div>
+      <div class="card metric"><span>Neto final</span><strong>${money(totals.netPayable)}</strong></div>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <form data-form="milk-settlement-filters" class="form-grid two">
+        <div class="field"><label>Mes de liquidación</label><input name="month" type="month" value="${escapeHtml(month)}" /></div>
+        <button class="btn secondary" type="submit">Ver liquidación</button>
+      </form>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Liquidación por productor</h2>
+      ${settlements.length ? renderMilkSettlementTable(settlements) : `<div class="empty">No hay entregas de leche para liquidar en este mes.</div>`}
+    </section>
+
+    <section class="grid cols-2" style="margin-top:18px; align-items:start;">
+      <div class="card">
+        <h2>Cómo se calcula</h2>
+        <div class="bullets">
+          <span>Bruto de leche = litros recibidos × precio por litro configurado.</span>
+          <span>Neto de leche = bruto de leche - comisión de la asociación.</span>
+          <span>Descuentos = saldo pendiente de facturas comerciales emitidas al productor.</span>
+          <span>Neto final = neto de leche - descuentos por facturas.</span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Uso recomendado</h2>
+        <div class="bullets">
+          <span>Registra ventas de alimento, medicina, transporte o servicios como facturas comerciales al productor.</span>
+          <span>Al cierre del mes, usa esta pantalla para descontar esas cuentas del pago de leche.</span>
+          <span>Exporta PDF para archivo interno y CSV para contabilidad.</span>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderMilkSettlementTable(rows) {
+  return `
+    <div class="table-wrap compact-table">
+      <table>
+        <thead>
+          <tr><th>Productor</th><th>Litros</th><th>Bruto leche</th><th>Comisión</th><th>Neto leche</th><th>Facturas pendientes</th><th>Neto final</th><th>Estado</th></tr>
+        </thead>
+        <tbody>${rows.map(row => `
+          <tr>
+            <td><strong>${escapeHtml(row.producer_name)}</strong><br><span class="help">${row.records} registros · ${row.days} días</span></td>
+            <td>${numberFmt(row.liters, 2)}</td>
+            <td>${money(row.gross)}</td>
+            <td>${money(row.commission)}</td>
+            <td>${money(row.net)}</td>
+            <td>${money(row.invoice_balance)}${row.invoice_count ? `<br><span class="help">${row.invoice_count} factura(s)</span>` : ''}</td>
+            <td><strong>${money(row.net_payable)}</strong></td>
+            <td>${renderSettlementStatusBadge(row.settlement_status)}</td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function handleMilkSettlementFilters(form) {
+  const fd = new FormData(form);
+  state.milkFilters = { month: String(fd.get('month') || currentMonthValue()) };
+  saveLocalState();
+  setRoute('milk-settlements');
+  render();
+}
+
+function generateMilkSettlementPdf() {
+  if (!guardAction('milk_pdf')) return;
+  if (!window.jspdf?.jsPDF) {
+    toast('jsPDF no está disponible. Revisa tu conexión.');
+    return;
+  }
+  const month = state.milkFilters?.month || currentMonthValue();
+  const settlements = getMilkSettlements(month);
+  const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+  const left = 44;
+  let y = 48;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(17);
+  doc.text('Liquidación mensual de productores', left, y);
+  y += 18;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`${state.company?.name || 'Asociación'} · Mes: ${month}`, left, y);
+  y += 24;
+  doc.setFontSize(8);
+  doc.text('Reporte interno: neto de leche menos saldos pendientes por facturas comerciales de insumos o servicios.', left, y);
+  y += 26;
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Productor', left, y);
+  doc.text('Litros', 170, y);
+  doc.text('Neto leche', 235, y);
+  doc.text('Facturas', 330, y);
+  doc.text('Neto final', 425, y);
+  doc.text('Estado', 510, y);
+  y += 8;
+  doc.line(left, y, 568, y);
+  y += 18;
+  doc.setFont('helvetica', 'normal');
+  settlements.forEach(row => {
+    if (y > 720) { doc.addPage(); y = 48; }
+    doc.text(String(row.producer_name).slice(0, 24), left, y);
+    doc.text(numberFmt(row.liters, 2), 170, y);
+    doc.text(money(row.net), 235, y);
+    doc.text(money(row.invoice_balance), 330, y);
+    doc.text(money(row.net_payable), 425, y);
+    doc.text(settlementStatusLabel(row.settlement_status).slice(0, 18), 510, y);
+    y += 18;
+  });
+
+  const totals = settlements.reduce((acc, row) => {
+    acc.liters += Number(row.liters || 0);
+    acc.net += Number(row.net || 0);
+    acc.invoiceBalance += Number(row.invoice_balance || 0);
+    acc.netPayable += Number(row.net_payable || 0);
+    return acc;
+  }, { liters: 0, net: 0, invoiceBalance: 0, netPayable: 0 });
+  y += 10;
+  doc.line(left, y, 568, y);
+  y += 18;
+  doc.setFont('helvetica', 'bold');
+  doc.text('Totales', left, y);
+  doc.text(numberFmt(totals.liters, 2), 170, y);
+  doc.text(money(totals.net), 235, y);
+  doc.text(money(totals.invoiceBalance), 330, y);
+  doc.text(money(totals.netPayable), 425, y);
+  doc.save(`liquidacion-ganadera-${month}.pdf`);
+}
+
+function exportMilkSettlementCsv() {
+  if (!guardAction('milk_csv')) return;
+  const month = state.milkFilters?.month || currentMonthValue();
+  const settlements = getMilkSettlements(month);
+  if (!settlements.length) {
+    toast('No hay liquidaciones para exportar.');
+    return;
+  }
+  const rows = [['mes','productor','cliente_id','dias','registros','litros','bruto_leche','comision_asociacion','neto_leche','facturas_pendientes','neto_final','estado']];
+  settlements.forEach(row => rows.push([month,row.producer_name,row.client_id || '',row.days,row.records,row.liters,row.gross,row.commission,row.net,row.invoice_balance,row.net_payable,settlementStatusLabel(row.settlement_status)]));
+  downloadTextFile(`liquidacion-ganadera-${month}.csv`, rows.map(row => row.map(csvEscape).join(',')).join('\n'), 'text/csv;charset=utf-8');
+  recordExportUsage('milk_settlement_csv');
+  toast('CSV de liquidación generado.');
 }
 
 
@@ -6761,6 +7024,8 @@ app.addEventListener('click', async (event) => {
     if (action === 'delete-milk-record') await deleteMilkRecord(id);
     if (action === 'milk-pdf') generateMilkPdf();
     if (action === 'milk-csv') exportMilkCsv();
+    if (action === 'milk-settlement-pdf') generateMilkSettlementPdf();
+    if (action === 'milk-settlement-csv') exportMilkSettlementCsv();
     if (action === 'convert-quote-invoice') await convertQuoteToInvoice(id);
     if (action === 'issue-invoice') await issueInvoice(id);
     if (action === 'void-invoice') await voidInvoice(id);
@@ -6794,6 +7059,7 @@ app.addEventListener('submit', async (event) => {
     if (type === 'milk-delivery') await saveMilkDelivery(form);
     if (type === 'invoice-payment') await saveInvoicePayment(form);
     if (type === 'milk-filters') handleMilkFilters(form);
+    if (type === 'milk-settlement-filters') handleMilkSettlementFilters(form);
     if (type === 'report-filters') handleReportFilters(form);
     if (type === 'client-filters') handleClientFilters(form);
   } catch (error) {
