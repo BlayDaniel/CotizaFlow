@@ -777,3 +777,32 @@ html[data-theme="black"] .badge.danger { background: rgba(153,27,27,.22); color:
 .theme-black .badge.danger {
   color: #fecaca;
 }
+
+/* Fase 10P */
+.compact-select {
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 0.9rem;
+}
+.compact-table table td,
+.compact-table table th {
+  vertical-align: middle;
+}
+.soft-card {
+  background: color-mix(in srgb, var(--card-bg, #fff) 92%, var(--accent, #2563eb) 8%);
+}
+.btn.warning {
+  background: #f59e0b;
+  color: #111827;
+  border-color: #f59e0b;
+}
+.inline-form {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.inline-form input {
+  min-width: 280px;
+  flex: 1;
+}

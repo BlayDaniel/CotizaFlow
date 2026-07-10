@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'cotizaflow_fase7_local_state_v1';
 const config = window.COTIZAFLOW_CONFIG || {};
+const PLATFORM_SUPERUSER_EMAIL = String(config.platformSuperuserEmail || 'juan.dmzjob@gmail.com').trim().toLowerCase();
 const app = document.getElementById('app');
 const REFERRAL_STORAGE_KEY = 'cotizaflow_pending_referral_code_v1';
 const QUOTE_DRAFT_STORAGE_KEY = 'cotizaflow_quote_form_draft_v1';
@@ -368,21 +369,69 @@ function roleDescription(roleKey = '') {
   return ROLE_DEFINITIONS[key]?.description || '';
 }
 
+function isPlatformSuperuserEmail(email) {
+  if (mode === 'local') return true;
+  return normalizeEmail(email) === PLATFORM_SUPERUSER_EMAIL;
+}
+
+function isPlatformSuperuser() {
+  return Boolean(state.session?.email && isPlatformSuperuserEmail(state.session.email));
+}
+
 function isCompanyOwner() {
   if (mode === 'local') return true;
   return Boolean(state.session?.id && state.company?.owner_user_id && String(state.company.owner_user_id) === String(state.session.id));
 }
 
-function getEffectiveRoleKey() {
-  if (!state.session) return 'lector';
-  if (isCompanyOwner()) return 'superuser';
-  const email = normalizeEmail(state.session.email);
-  const bySession = (state.teamMembers || []).find(member => {
+function currentTeamMember() {
+  const email = normalizeEmail(state.session?.email || '');
+  return (state.teamMembers || []).find(member => {
     if (String(member.status || 'active') !== 'active') return false;
     if (member.user_id && state.session?.id && String(member.user_id) === String(state.session.id)) return true;
     return email && normalizeEmail(member.email) === email;
-  });
-  return normalizeRole(bySession?.role || state.currentMember?.role || 'lector');
+  }) || state.currentMember || null;
+}
+
+function normalizeAccessOverride(value) {
+  if (!value) return { allow: [], deny: [] };
+  let parsed = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch (_error) { parsed = {}; }
+  }
+  const allow = Array.isArray(parsed.allow) ? parsed.allow.map(String) : [];
+  const deny = Array.isArray(parsed.deny) ? parsed.deny.map(String) : [];
+  return { allow: [...new Set(allow)], deny: [...new Set(deny)] };
+}
+
+function memberPermissionOverride(member, permission) {
+  const overrides = normalizeAccessOverride(member?.permission_overrides);
+  if (overrides.deny.includes(permission)) return 'deny';
+  if (overrides.allow.includes(permission)) return 'allow';
+  return 'inherit';
+}
+
+function memberFeatureOverride(member, featureKey) {
+  const overrides = normalizeAccessOverride(member?.feature_overrides);
+  if (overrides.deny.includes(featureKey)) return 'deny';
+  if (overrides.allow.includes(featureKey)) return 'allow';
+  return 'inherit';
+}
+
+function allPermissionKeys() {
+  const set = new Set();
+  Object.values(ROLE_DEFINITIONS).forEach(role => (role.permissions || []).forEach(permission => {
+    if (permission !== '*') set.add(permission);
+  }));
+  return [...set].sort();
+}
+
+function getEffectiveRoleKey() {
+  if (!state.session) return 'lector';
+  if (isPlatformSuperuser()) return 'superuser';
+  const member = currentTeamMember();
+  let roleKey = normalizeRole(member?.role || state.currentMember?.role || (isCompanyOwner() ? 'admin' : 'lector'));
+  if (roleKey === 'superuser') roleKey = 'admin';
+  return roleKey;
 }
 
 function getEffectiveRole() {
@@ -390,6 +439,11 @@ function getEffectiveRole() {
 }
 
 function can(permission) {
+  if (permission === 'users_manage') return isPlatformSuperuser();
+  const member = currentTeamMember();
+  const override = memberPermissionOverride(member, permission);
+  if (override === 'deny') return false;
+  if (override === 'allow') return true;
   const role = getEffectiveRole();
   return role.permissions.includes('*') || role.permissions.includes(permission);
 }
@@ -978,7 +1032,7 @@ async function ensureOwnerMembership(company) {
       user_id: state.session.id,
       email: normalizeEmail(state.session.email),
       full_name: state.session.name || state.session.email,
-      role: 'superuser',
+      role: isPlatformSuperuserEmail(state.session.email) ? 'superuser' : 'admin',
       status: 'active',
       created_by_user_id: state.session.id,
       updated_at: new Date().toISOString()
@@ -999,7 +1053,7 @@ async function loadTeamMembers() {
     user_id: state.session?.id || 'local-user',
     email: normalizeEmail(state.session?.email || 'demo@cotizaflow.local'),
     full_name: state.session?.name || 'Superusuario',
-    role: 'superuser',
+    role: isPlatformSuperuserEmail(state.session?.email) ? 'superuser' : 'admin',
     status: 'active',
     created_at: new Date().toISOString()
   };
@@ -1259,9 +1313,13 @@ function planFeatureSet(planKey = getEffectivePlanKey()) {
 
 function canUseFeature(featureKey) {
   if (!featureKey) return true;
+  const key = String(featureKey);
+  const override = memberFeatureOverride(currentTeamMember(), key);
+  if (override === 'deny') return false;
+  if (override === 'allow') return true;
   const effectivePlan = getEffectivePlanKey();
   if (effectivePlan === 'crm_empresa') return true;
-  return planFeatureSet(effectivePlan).has(String(featureKey));
+  return planFeatureSet(effectivePlan).has(key);
 }
 
 function featureUpgradePlan(featureKey) {
@@ -5501,7 +5559,8 @@ function renderTeamMembers() {
               ${members.map(member => {
                 const roleKey = normalizeRole(member.role);
                 const isSelf = normalizeEmail(member.email) === ownerEmail || (member.user_id && state.session?.id && String(member.user_id) === String(state.session.id));
-                const isProtectedSuperuser = roleKey === 'superuser' || isSelf;
+                const isProtectedSuperuser = isPlatformSuperuserEmail(member.email);
+                const isInactive = String(member.status || 'active') !== 'active';
                 return `
                   <tr>
                     <td><strong>${escapeHtml(member.full_name || 'Sin nombre')}</strong>${isSelf ? '<br><span class="help">Tu usuario</span>' : ''}</td>
@@ -5512,7 +5571,10 @@ function renderTeamMembers() {
                     <td>
                       <div class="row-actions">
                         <button class="btn secondary small" data-action="send-setup-email" data-email="${escapeHtml(member.email || '')}">Enviar acceso</button>
-                        ${isProtectedSuperuser ? '<span class="help">Protegido</span>' : `<button class="btn danger small" data-action="deactivate-team-member" data-id="${escapeHtml(member.id)}">Desactivar</button>`}
+                        ${isProtectedSuperuser ? '<span class="help">Protegido</span>' : `
+                          ${isInactive ? `<button class="btn secondary small" data-action="activate-team-member" data-id="${escapeHtml(member.id)}">Activar</button>` : `<button class="btn warning small" data-action="deactivate-team-member" data-id="${escapeHtml(member.id)}">Desactivar</button>`}
+                          <button class="btn danger small" data-action="delete-team-member" data-id="${escapeHtml(member.id)}">Eliminar</button>
+                        `}
                       </div>
                     </td>
                   </tr>
@@ -5554,10 +5616,14 @@ async function saveTeamMember(form) {
     toast('El correo es obligatorio.');
     return;
   }
-  if (payload.email === normalizeEmail(state.session?.email) && isCompanyOwner()) {
+  if (payload.role === 'superuser' && !isPlatformSuperuserEmail(payload.email)) {
+    payload.role = 'admin';
+    toast('Solo ' + PLATFORM_SUPERUSER_EMAIL + ' puede tener rol Superusuario. El usuario se guardará como Administrador.');
+  }
+  if (isPlatformSuperuserEmail(payload.email)) {
     payload.role = 'superuser';
     payload.status = 'active';
-    payload.user_id = state.session.id;
+    if (payload.email === normalizeEmail(state.session?.email)) payload.user_id = state.session.id;
   }
 
   if (mode === 'supabase') {
@@ -5608,8 +5674,8 @@ async function deactivateTeamMember(id) {
   if (!requirePermission('users_manage')) return;
   const member = (state.teamMembers || []).find(item => String(item.id) === String(id));
   if (!member) return;
-  if (normalizeEmail(member.email) === normalizeEmail(state.session?.email) || normalizeRole(member.role) === 'superuser') {
-    toast('No puedes desactivar tu propio usuario ni un Superusuario desde esta pantalla.');
+  if (isPlatformSuperuserEmail(member.email)) {
+    toast('No puedes desactivar el Superusuario principal.');
     return;
   }
   if (!confirm('¿Desactivar este usuario?')) return;
@@ -5625,6 +5691,51 @@ async function deactivateTeamMember(id) {
     saveLocalState();
   }
   toast('Usuario desactivado.');
+  setRoute('team');
+  render();
+}
+
+async function activateTeamMember(id) {
+  if (!requirePermission('users_manage')) return;
+  const member = (state.teamMembers || []).find(item => String(item.id) === String(id));
+  if (!member) return;
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient
+      .from('company_members')
+      .update({ status: 'active', updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+    await loadTeamMembers();
+  } else {
+    state.teamMembers = state.teamMembers.map(item => String(item.id) === String(id) ? { ...item, status: 'active', updated_at: new Date().toISOString() } : item);
+    saveLocalState();
+  }
+  toast('Usuario activado.');
+  setRoute('team');
+  render();
+}
+
+async function deleteTeamMember(id) {
+  if (!requirePermission('users_manage')) return;
+  const member = (state.teamMembers || []).find(item => String(item.id) === String(id));
+  if (!member) return;
+  if (isPlatformSuperuserEmail(member.email)) {
+    toast('No puedes eliminar el Superusuario principal.');
+    return;
+  }
+  if (!confirm('¿Eliminar este usuario de Roles actuales? Esto no borra la cuenta de Supabase Auth, solo su acceso a esta empresa.')) return;
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient
+      .from('company_members')
+      .delete()
+      .eq('id', id);
+    if (error) throw error;
+    await loadTeamMembers();
+  } else {
+    state.teamMembers = (state.teamMembers || []).filter(item => String(item.id) !== String(id));
+    saveLocalState();
+  }
+  toast('Usuario eliminado de Roles actuales.');
   setRoute('team');
   render();
 }
@@ -5752,6 +5863,143 @@ async function copyDiagnosticSummary() {
   }
 }
 
+
+async function lookupDiagnosticUser(form) {
+  const fd = new FormData(form);
+  const email = normalizeEmail(fd.get('email'));
+  if (!email) { toast('Introduce un correo.'); return; }
+  state.diagnosticTargetEmail = email;
+  if (mode === 'supabase' && supabaseClient && state.company?.id && isPlatformSuperuser()) {
+    try {
+      const { data, error } = await supabaseClient
+        .from('company_members')
+        .select('*')
+        .eq('company_id', state.company.id)
+        .eq('email', email)
+        .maybeSingle();
+      if (error) throw error;
+      if (data && !(state.teamMembers || []).some(member => String(member.id) === String(data.id))) {
+        state.teamMembers = [...(state.teamMembers || []), data];
+      }
+    } catch (error) {
+      console.warn('No se pudo consultar usuario por correo:', error.message || error);
+    }
+  }
+  render();
+}
+
+function diagnosticTargetMember() {
+  const email = normalizeEmail(state.diagnosticTargetEmail || '');
+  if (!email) return null;
+  return (state.teamMembers || []).find(member => normalizeEmail(member.email) === email) || null;
+}
+
+function rolePermissionsForMember(member) {
+  let roleKey = normalizeRole(member?.role || 'lector');
+  if (roleKey === 'superuser' && !isPlatformSuperuserEmail(member?.email)) roleKey = 'admin';
+  const role = ROLE_DEFINITIONS[roleKey] || ROLE_DEFINITIONS.lector;
+  const all = allPermissionKeys();
+  const base = role.permissions.includes('*') ? new Set(all) : new Set(role.permissions || []);
+  const overrides = normalizeAccessOverride(member?.permission_overrides);
+  overrides.deny.forEach(key => base.delete(key));
+  overrides.allow.forEach(key => base.add(key));
+  if (!isPlatformSuperuserEmail(member?.email)) base.delete('users_manage');
+  return base;
+}
+
+function featuresForMember(member) {
+  const base = planFeatureSet(getEffectivePlanKey());
+  const set = new Set(base);
+  const overrides = normalizeAccessOverride(member?.feature_overrides);
+  overrides.deny.forEach(key => set.delete(key));
+  overrides.allow.forEach(key => set.add(key));
+  return set;
+}
+
+function accessOverrideSelect(name, current = 'inherit') {
+  return `<select name="${escapeHtml(name)}" class="compact-select">
+    <option value="inherit" ${current === 'inherit' ? 'selected' : ''}>Heredar</option>
+    <option value="allow" ${current === 'allow' ? 'selected' : ''}>Activar</option>
+    <option value="deny" ${current === 'deny' ? 'selected' : ''}>Desactivar</option>
+  </select>`;
+}
+
+function renderDiagnosticUserPanel() {
+  const email = normalizeEmail(state.diagnosticTargetEmail || '');
+  const member = diagnosticTargetMember();
+  const permissions = member ? rolePermissionsForMember(member) : new Set();
+  const features = member ? featuresForMember(member) : new Set();
+  const isProtected = member && isPlatformSuperuserEmail(member.email);
+  const permissionKeys = allPermissionKeys();
+  const featureKeys = Object.keys(FEATURE_DEFINITIONS).sort();
+  return `
+    <section class="card" style="margin-top:18px;">
+      <h2>Diagnóstico por usuario</h2>
+      <p class="help">Introduce un correo existente en Roles actuales para revisar su rol, estado, permisos y módulos. Solo ${escapeHtml(PLATFORM_SUPERUSER_EMAIL)} puede usar esta herramienta.</p>
+      <form data-form="diagnostic-user-lookup" class="inline-form">
+        <input name="email" type="email" value="${escapeHtml(email)}" placeholder="usuario@empresa.com" required />
+        <button class="btn primary" type="submit">Buscar usuario</button>
+      </form>
+      ${email && !member ? `<div class="notice warning" style="margin-top:14px;">No se encontró ${escapeHtml(email)} en Roles actuales de esta empresa.</div>` : ''}
+      ${member ? `
+        <section class="grid cols-4" style="margin-top:18px;">
+          <div class="stat-card"><span>Correo</span><strong>${escapeHtml(member.email)}</strong><small>${escapeHtml(member.full_name || 'Sin nombre')}</small></div>
+          <div class="stat-card"><span>Rol</span><strong>${escapeHtml(roleLabel(member.role))}</strong><small>${escapeHtml(normalizeRole(member.role))}</small></div>
+          <div class="stat-card"><span>Estado</span><strong>${escapeHtml(member.status || 'active')}</strong><small>${isProtected ? 'Superusuario principal protegido' : 'Editable'}</small></div>
+          <div class="stat-card"><span>Permisos activos</span><strong>${permissions.size}</strong><small>Módulos activos: ${features.size}</small></div>
+        </section>
+        <form data-form="diagnostic-user-access" style="margin-top:18px;">
+          <input type="hidden" name="email" value="${escapeHtml(member.email)}" />
+          ${isProtected ? `<div class="notice info">El Superusuario principal no puede ser degradado, eliminado ni limitado desde esta pantalla.</div>` : `
+            <div class="grid cols-2">
+              <div class="card soft-card">
+                <h3>Permisos por usuario</h3>
+                <div class="table-wrap compact-table"><table><thead><tr><th>Permiso</th><th>Estado efectivo</th><th>Override</th></tr></thead><tbody>
+                  ${permissionKeys.map(key => `<tr><td><code>${escapeHtml(key)}</code></td><td>${permissions.has(key) ? '<span class="badge success">Activo</span>' : '<span class="badge locked">Inactivo</span>'}</td><td>${accessOverrideSelect('perm:' + key, memberPermissionOverride(member, key))}</td></tr>`).join('')}
+                </tbody></table></div>
+              </div>
+              <div class="card soft-card">
+                <h3>Módulos por usuario</h3>
+                <div class="table-wrap compact-table"><table><thead><tr><th>Módulo</th><th>Estado efectivo</th><th>Override</th></tr></thead><tbody>
+                  ${featureKeys.map(key => `<tr><td>${escapeHtml(FEATURE_DEFINITIONS[key]?.label || key)}<br><code>${escapeHtml(key)}</code></td><td>${features.has(key) ? '<span class="badge success">Activo</span>' : '<span class="badge locked">Inactivo</span>'}</td><td>${accessOverrideSelect('feature:' + key, memberFeatureOverride(member, key))}</td></tr>`).join('')}
+                </tbody></table></div>
+              </div>
+            </div>
+            <div class="form-actions" style="margin-top:14px;"><button class="btn primary" type="submit">Guardar permisos y módulos</button></div>
+          `}
+        </form>
+      ` : ''}
+    </section>
+  `;
+}
+
+async function saveDiagnosticUserAccess(form) {
+  if (!requirePermission('users_manage')) return;
+  const fd = new FormData(form);
+  const email = normalizeEmail(fd.get('email'));
+  const member = (state.teamMembers || []).find(item => normalizeEmail(item.email) === email);
+  if (!member) { toast('Usuario no encontrado.'); return; }
+  if (isPlatformSuperuserEmail(member.email)) { toast('El Superusuario principal no puede ser limitado.'); return; }
+  const permissionOverrides = { allow: [], deny: [] };
+  const featureOverrides = { allow: [], deny: [] };
+  for (const [key, value] of fd.entries()) {
+    if (key.startsWith('perm:') && ['allow','deny'].includes(String(value))) permissionOverrides[String(value)].push(key.slice(5));
+    if (key.startsWith('feature:') && ['allow','deny'].includes(String(value))) featureOverrides[String(value)].push(key.slice(8));
+  }
+  const patch = { permission_overrides: permissionOverrides, feature_overrides: featureOverrides, updated_at: new Date().toISOString() };
+  if (mode === 'supabase') {
+    const { error } = await supabaseClient.from('company_members').update(patch).eq('id', member.id);
+    if (error) throw error;
+    await loadTeamMembers();
+  } else {
+    Object.assign(member, patch);
+    saveLocalState();
+  }
+  state.diagnosticTargetEmail = email;
+  toast('Permisos y módulos actualizados.');
+  render();
+}
+
 function renderDiagnostics() {
   const plan = getEffectivePlan();
   const status = normalizeSubscriptionStatus(getRawBillingStatus());
@@ -5818,6 +6066,8 @@ function renderDiagnostics() {
       <h2>Acceso por módulo</h2>
       <div class="table-wrap"><table><thead><tr><th>Módulo</th><th>Estado</th><th>Detalle</th></tr></thead><tbody>${moduleDiagnosticRows()}</tbody></table></div>
     </section>
+
+    ${renderDiagnosticUserPanel()}
 
     <section class="card" style="margin-top:18px;">
       <h2>Helpers críticos de interfaz</h2>
@@ -7300,6 +7550,8 @@ app.addEventListener('click', async (event) => {
     if (action === 'seed-catalog') await seedCatalogForBusinessType();
     if (action === 'delete-message-template') await deleteMessageTemplate(id);
     if (action === 'deactivate-team-member') await deactivateTeamMember(id);
+    if (action === 'activate-team-member') await activateTeamMember(id);
+    if (action === 'delete-team-member') await deleteTeamMember(id);
     if (action === 'send-setup-email') await sendUserSetupEmail(email);
     if (action === 'clear-logo') clearCompanyLogo();
     if (action === 'delete-milk-record') await deleteMilkRecord(id);
@@ -7338,6 +7590,8 @@ app.addEventListener('submit', async (event) => {
     if (type === 'product-service') await saveProductService(form);
     if (type === 'message-template') await saveMessageTemplate(form);
     if (type === 'team-member') await saveTeamMember(form);
+    if (type === 'diagnostic-user-lookup') await lookupDiagnosticUser(form);
+    if (type === 'diagnostic-user-access') await saveDiagnosticUserAccess(form);
     if (type === 'milk-delivery') await saveMilkDelivery(form);
     if (type === 'invoice-payment') await saveInvoicePayment(form);
     if (type === 'milk-filters') handleMilkFilters(form);

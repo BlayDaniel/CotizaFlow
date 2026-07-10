@@ -5,6 +5,9 @@ window.COTIZAFLOW_CONFIG = {
   supabaseUrl: 'https://TU-PROYECTO.supabase.co',
   supabaseAnonKey: 'TU_SUPABASE_PUBLISHABLE_KEY',
   appName: 'CotizaFlow',
+  platformSuperuserEmail: 'juan.dmzjob@gmail.com',
   billingProvider: 'lemon_squeezy',
-  salesEmail: 'ventas@cotizaflow.app'
+  salesEmail: 'ventas@cotizaflow.app',
+  // Opcional: número internacional sin + para botón de WhatsApp comercial. Ej: '18090000000'
+  salesWhatsapp: ''
 };

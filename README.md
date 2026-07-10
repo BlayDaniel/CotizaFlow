@@ -313,3 +313,24 @@ Prueba recomendada:
 3. Confirmar que los helpers críticos aparecen en OK.
 4. Confirmar plan, rol, estado y límites.
 5. Copiar diagnóstico si se detecta un error para facilitar soporte.
+
+## Fase 10P — Superusuario único, usuarios y diagnóstico por correo
+
+Esta fase deja como Superusuario operativo único a `juan.dmzjob@gmail.com`.
+
+Cambios principales:
+
+- Solo ese correo ve Configuración > Usuarios y roles.
+- Solo ese correo ve Configuración > Diagnóstico.
+- Los demás usuarios, aunque sean propietarios de empresa o hayan quedado como `superuser` en fases anteriores, se tratan como Administrador.
+- En Roles actuales se puede activar, desactivar o eliminar un usuario de la empresa.
+- Eliminar un usuario no borra su cuenta de Supabase Auth; solo elimina su membresía/rol dentro de la empresa.
+- En Diagnóstico se puede introducir un correo, revisar su rol, estado, permisos efectivos y módulos efectivos.
+- Desde Diagnóstico se pueden activar o desactivar permisos/módulos para ese correo usando overrides por usuario.
+- El Superusuario principal queda protegido: no puede degradarse, limitarse, desactivarse ni eliminarse desde la interfaz.
+
+SQL nuevo:
+
+`supabase/schema_phase10p_platform_superuser_user_access.sql`
+
+Ejecutar después de las fases anteriores. El SQL no borra datos operativos. Agrega columnas de overrides a `company_members`, crea funciones de superusuario de plataforma y endurece las políticas RLS para que solo `juan.dmzjob@gmail.com` administre usuarios y roles.
