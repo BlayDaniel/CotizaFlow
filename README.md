@@ -250,3 +250,50 @@ Corrección aplicada:
 - Se ejecutó una revisión estática de referencias a funciones faltantes para evitar errores tipo `... is not defined` en interfaz.
 
 No requiere SQL nuevo si ya ejecutaste la versión v2 del SQL de Fase 10M.
+
+## Fase 10N — Backend seguro para links públicos
+
+Esta fase agrega la base segura para compartir cotizaciones mediante links públicos sin exponer tablas directamente desde el frontend.
+
+### Incluye
+
+- Tabla `quote_public_links` para tokens públicos de cotización.
+- Tabla `quote_events` para vistas, aceptación, rechazo, descargas e historial de seguimiento.
+- Tabla `message_logs` para registrar mensajes enviados o copiados.
+- Función RPC `create_quote_public_link()` para crear o reutilizar links activos.
+- Función RPC `get_public_quote_payload()` para leer una cotización pública por token.
+- Función RPC `register_public_quote_action()` para aceptar, rechazar o registrar eventos desde `public.html`.
+- Edge Function `create-public-quote-link`.
+- Edge Function `get-public-quote`.
+- Edge Function `quote-public-action`.
+
+### Orden recomendado de SQL
+
+Ejecuta primero las fases previas y luego:
+
+```sql
+supabase/schema_phase10n_secure_public_links.sql
+```
+
+### Despliegue de Edge Functions
+
+Desde la carpeta del proyecto, con Supabase CLI configurado:
+
+```bash
+supabase functions deploy create-public-quote-link
+supabase functions deploy get-public-quote
+supabase functions deploy quote-public-action
+```
+
+Estas funciones usan `SUPABASE_URL` y `SUPABASE_ANON_KEY`, variables disponibles normalmente en Supabase Edge Functions. No requieren poner `service_role` en frontend ni en GitHub.
+
+### Validación
+
+1. Ejecuta el SQL de Fase 10N.
+2. Despliega las tres Edge Functions.
+3. Entra a una cotización.
+4. Presiona Crear link público.
+5. Abre `public.html?t=TOKEN`.
+6. Acepta o rechaza la cotización desde la vista pública.
+7. Regresa a la app y confirma que el estado y los eventos quedan registrados.
+
