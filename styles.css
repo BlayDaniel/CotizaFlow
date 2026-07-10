@@ -894,3 +894,34 @@ body { width: 100%; overflow-x: hidden; }
   table { font-size: 13px; }
   th, td { padding: 9px; }
 }
+
+
+/* Fase 10U: ajuste de layout sin romper escritorio
+   Mantiene el desktop en dos columnas normales y limita los hacks móviles al breakpoint. */
+@media (min-width: 641px) {
+  html, body { overflow-x: auto; }
+  .layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); }
+  .sidebar { position: sticky; top: 0; height: 100vh; width: auto; max-width: none; overflow-x: visible; }
+  .sidebar nav { display: grid; overflow-x: visible; }
+  .main { overflow-x: visible; padding: 28px; }
+  .page-header { overflow: visible; }
+  .table-wrap { contain: none; }
+  .table-wrap table { width: 100%; min-width: 0; max-width: 100%; }
+  .compact-table table { min-width: 0; }
+  .diagnostic-mobile-stack table { min-width: 0; }
+  .btn { width: auto; }
+}
+
+@media (max-width: 640px) {
+  html, body { overflow-x: hidden; }
+  #app, .app-page, .layout, .main { max-width: 100vw; }
+  .layout { display: block; }
+  .sidebar { position: relative; top: auto; height: auto; width: 100%; max-width: 100vw; }
+  .main { max-width: 100vw; overflow-x: clip; }
+  .card, .notice, .empty, .page-header, .diagnostic-grid, .billing-health-card { max-width: 100%; min-width: 0; }
+  .table-wrap { max-width: 100%; overflow-x: auto; contain: none; }
+  .table-wrap table { width: max-content; min-width: 520px; }
+  .diagnostic-grid, .global-diagnostic-grid, .billing-grid, .plan-grid, .qa-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .field, .inline-form, .copy-line { min-width: 0; max-width: 100%; }
+  .field input, .field textarea, .field select { min-width: 0; width: 100%; }
+}

@@ -58,3 +58,34 @@ supabase functions deploy platform-admin-users
 - Helpers críticos revisados: correcto.
 - Edge Function reescrita para reducir dependencia de RPC y exponer errores JSON claros.
 - SQL incremental, sin eliminación de datos operativos.
+
+
+## Fase 10U — Edge Function administrativa y layout estable
+
+Correcciones incluidas:
+
+- La Edge Function `platform-admin-users` ya no devuelve HTTP 400 para errores manejados. Devuelve JSON controlado para que el diagnóstico muestre el detalle exacto.
+- La función busca usuarios Auth con `service_role` y usa RPC solo como respaldo para membresías.
+- Se agregó soporte de secrets alternativos: `SUPABASE_SERVICE_ROLE_KEY`, `SERVICE_ROLE_KEY` o `SUPABASE_SERVICE_KEY`. El recomendado sigue siendo `SUPABASE_SERVICE_ROLE_KEY`.
+- Se redujo el CSS agresivo que podía romper el layout de escritorio. El comportamiento móvil queda limitado a breakpoints móviles.
+- Se mantiene scroll interno en tablas para evitar overflow global.
+
+Archivos a reemplazar:
+
+- `app.js`
+- `styles.css`
+- `README.md`
+- `supabase/functions/platform-admin-users/index.ts`
+- `supabase/functions/_shared/cors.ts`
+
+SQL a ejecutar:
+
+- `supabase/schema_phase10u_edge_mobile_layout.sql`
+
+Después despliega de nuevo:
+
+```bash
+supabase functions deploy platform-admin-users
+```
+
+Verifica en Supabase Edge Functions > Secrets que exista `SUPABASE_SERVICE_ROLE_KEY`.
